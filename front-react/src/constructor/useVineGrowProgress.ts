@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VineEvent } from "./TodayVineTimeline";
 const MAIN_START_Y = 30;
-const MAIN_END_Y = 570;
+const MAIN_END_Y = 650;
 const Y_TOTAL_RANGE = MAIN_END_Y - MAIN_START_Y;
 const MAIN_GROW_DURATION = 900;
 
@@ -11,6 +11,7 @@ type RawVine = {
   endY: number;
   path: string;
   color: string;
+  groupShift: number;
   event: VineEvent;
 };
 
@@ -41,6 +42,7 @@ export function useVineGrowProgress<T extends RawVine>(originVines: T[]) {
             vine.endY,
             vine.path,
             vine.color,
+            vine.groupShift,
             vine.event?.id ?? "",
             vine.event?.title ?? "",
             vine.event?.startTime ?? "",

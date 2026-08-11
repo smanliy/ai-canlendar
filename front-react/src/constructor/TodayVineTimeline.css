@@ -42,8 +42,8 @@
 .today-vine-svg {
   display: block;
   width: 100%;
-  height: min(600px, 72vh);
-  min-height: 520px;
+  height: min(650px, 80vh);
+  min-height: 650px;
 }
 
 .vine-main-base {
@@ -58,9 +58,9 @@
   stroke: #478c42;
   stroke-width: 3;
   stroke-linecap: round;
-  stroke-dasharray: 560;
-  stroke-dashoffset: 560;
-  animation: vineGrow 900ms ease-out forwards;
+  stroke-dasharray: 620;
+  stroke-dashoffset: 620;
+  animation: vineGrow 1000ms ease-out forwards;
 }
 
 .vine-branch {
