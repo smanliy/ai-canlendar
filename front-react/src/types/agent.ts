@@ -1,0 +1,73 @@
+import type { EventCategory, EventPriority } from './event';
+
+export type AgentStepStatus = 'pending' | 'running' | 'success' | 'failed';
+export type AgentRunStatus = 'idle' | 'running' | 'success' | 'failed' | 'waitingConfirm';
+
+export interface AgentRunStep {
+  id: string;
+  name: string;
+  status: AgentStepStatus;
+  input?: unknown;
+  output?: unknown;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlanItem {
+  id: string;
+  title: string;
+  date: string;
+  timeRange: string;
+  durationHours: number;
+  category: EventCategory;
+  priority: EventPriority;
+}
+
+export interface SchedulePlan {
+  taskName: string;
+  deadline: string;
+  totalHours: number;
+  summary?: string;
+  items: PlanItem[];
+}
+
+export interface SchedulePlanOption extends SchedulePlan {
+  id: string;
+  name: string;
+  type?: 'generated' | 'custom';
+  color?: string;
+  accent?: string;
+}
+
+export interface AgentConflict {
+  id: string;
+  message: string;
+}
+
+export interface AgentRun {
+  runId: string;
+  status: AgentRunStatus;
+  rawInput: string;
+  steps: AgentRunStep[];
+  plans: SchedulePlanOption[];
+  selectedPlanId: string | null;
+  conflicts: AgentConflict[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentRunDetail {
+  runId: string;
+  status: AgentRunStatus;
+  rawInput: string;
+  currentNodeName: string;
+  nodeInput: unknown;
+  nodeOutput: unknown;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AgentStep = AgentRunStep;
+export type AgentPlan = SchedulePlan;
