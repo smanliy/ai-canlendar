@@ -19,6 +19,10 @@ export async function createRun(req: Request, res: Response): Promise<void> {
     }
 
     const payload = validateCreateAgentRunPayload(req.body);
+    console.log('[Node Agent API] POST /api/agent/runs received:', {
+      userId: req.user.id,
+      input: payload.input
+    });
     const data = await agentService.createScheduleRun(req.user.id, payload.input);
 
     res.status(201).json({

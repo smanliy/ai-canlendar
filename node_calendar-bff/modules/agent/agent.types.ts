@@ -5,6 +5,8 @@ export interface ParsedSubtask {
   title: string;
   minutes: number;
   order: number;
+  startAt?: string;
+  endAt?: string;
 }
 
 export interface ParsedScheduleTask {
@@ -21,6 +23,15 @@ export interface ParsedScheduleTask {
   subtasks: ParsedSubtask[];
 }
 
+export interface AgentUserPreference {
+  preferredStartTime: string;
+  preferredEndTime: string;
+  dailyFocusLimitMinutes: number;
+  avoidWeekends: boolean;
+  defaultEventCategory: string;
+  timezone: string;
+}
+
 export interface AgentConflict {
   id: string;
   message: string;
@@ -31,6 +42,8 @@ export interface PlanItem {
   title: string;
   date: string;
   timeRange: string;
+  startAt?: string;
+  endAt?: string;
   durationHours: number;
   category: EventCategory;
   priority: EventPriority;
@@ -56,7 +69,12 @@ export interface AgentRunResponse {
   runId: string;
   status: 'waitingConfirm';
   rawInput: string;
+  userPreference: AgentUserPreference;
   parsedTask: ParsedScheduleTask;
+  pythonAgentAck?: {
+    message: string;
+    received?: unknown;
+  };
   plans: SchedulePlanOption[];
   plan: SchedulePlanOption;
   conflicts: AgentConflict[];

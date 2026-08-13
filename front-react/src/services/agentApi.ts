@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 
 import { useAuthStore } from '../stores/authStore';
-import type { AgentRunDetail, AgentRunStep, AgentRunStatus, SchedulePlan, SchedulePlanOption } from '../types/agent';
+import type { AgentRunDetail, AgentRunStep, AgentRunStatus, AgentUserPreference, SchedulePlan, SchedulePlanOption } from '../types/agent';
 
 interface ApiResponse<T> {
   code: number;
@@ -118,9 +118,11 @@ export const agentApi = {
 
     const data = await request<{
       runId: string;
+      userPreference: AgentUserPreference;
       plans: SchedulePlanOption[];
       plan: SchedulePlan;
       conflicts: { id: string; message: string }[];
+      pythonAgentAck?: { message: string };
     }>('/agent/runs', {
       method: 'POST',
       body: JSON.stringify({ input })

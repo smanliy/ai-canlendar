@@ -14,11 +14,22 @@ export interface AgentRunStep {
   updatedAt: string;
 }
 
+export interface AgentUserPreference {
+  preferredStartTime: string;
+  preferredEndTime: string;
+  dailyFocusLimitMinutes: number;
+  avoidWeekends: boolean;
+  defaultEventCategory: string;
+  timezone: string;
+}
+
 export interface PlanItem {
   id: string;
   title: string;
   date: string;
   timeRange: string;
+  startAt?: string;
+  endAt?: string;
   durationHours: number;
   category: EventCategory;
   priority: EventPriority;
