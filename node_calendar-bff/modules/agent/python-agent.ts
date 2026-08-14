@@ -41,6 +41,7 @@ export interface PythonPlanResult {
     issues: string[];
   };
   toolResults?: unknown;
+  calendarEventsToolResult?: unknown;
 }
 
 export interface PythonAgentAck {

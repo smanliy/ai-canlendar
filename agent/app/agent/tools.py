@@ -6,6 +6,7 @@ import ast
 import operator
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 from socket import timeout as SocketTimeout
@@ -68,6 +69,23 @@ def _http_get(url: str, timeout: int = 8) -> str:
     with urllib.request.urlopen(request, timeout=timeout) as response:
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, errors="replace")
+
+
+def _http_post_json(url: str, payload: dict[str, Any], timeout: int = 8) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        method="POST",
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; ChronoAgent/1.0; +https://localhost)",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read().decode("utf-8")
+    value = json.loads(body) if body else {}
+    return value if isinstance(value, dict) else {}
 
 
 def _format_network_error(prefix: str, error: Exception) -> str:
@@ -385,6 +403,121 @@ def calculate(expr: str) -> dict[str, Any]:
     return payload
 
 
+def _format_agent_calendar_time(value: str) -> str:
+    try:
+        normalized = value.replace("Z", "+00:00")
+        date = datetime.fromisoformat(normalized)
+        if date.tzinfo is None:
+            date = date.replace(tzinfo=timezone.utc)
+        shanghai = date.astimezone(timezone(timedelta(hours=8)))
+        return shanghai.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return value
+
+
+def _print_calendar_events_table(user_id: str, events: list[dict[str, Any]]) -> None:
+    print("[Python Agent Tool] Local calendar events fetched:", flush=True)
+    print(f"USER {user_id}", flush=True)
+    print("TIMEZONE Asia/Shanghai", flush=True)
+    print(f"COUNT {len(events)}", flush=True)
+    print(
+        "FORMAT YYYY-MM-DD HH:mm - YYYY-MM-DD HH:mm | title | category/priority | status | source | id",
+        flush=True,
+    )
+    print("-" * 150, flush=True)
+    if not events:
+        print("(empty)", flush=True)
+        return
+    for event in events:
+        print(
+            " | ".join(
+                [
+                    f"{_format_agent_calendar_time(str(event.get('startAt', '')))} - {_format_agent_calendar_time(str(event.get('endAt', '')))}",
+                    str(event.get("title", "")),
+                    f"{event.get('category', '')}/{event.get('priority', '')}",
+                    str(event.get("status", "")),
+                    str(event.get("source", "")),
+                    str(event.get("id", "")),
+                ]
+            ),
+            flush=True,
+        )
+
+
+def calendar_events_query(user_id: str, start_iso: str, end_iso: str) -> dict[str, Any]:
+    print(
+        f"[Python Agent Tool] calendar_events_query userId={user_id} startIso={start_iso} endIso={end_iso}",
+        flush=True,
+    )
+    errors: list[str] = []
+    events: list[dict[str, Any]] = []
+    node_base_url = (_get_env_value("NODE_INTERNAL_BASE_URL", "NODE_BFF_URL") or "http://127.0.0.1:3000").rstrip("/")
+    try:
+        response = _http_post_json(
+            f"{node_base_url}/api/agent/internal/calendar-events",
+            {
+                "userId": user_id,
+                "startIso": start_iso,
+                "endIso": end_iso,
+            },
+            timeout=8,
+        )
+        data = response.get("data") if isinstance(response.get("data"), dict) else {}
+        raw_events = data.get("events") if isinstance(data.get("events"), list) else []
+        events = [
+            {
+                "id": str(item.get("id", "")),
+                "title": str(item.get("title", "")),
+                "startAt": str(item.get("startTime", "")),
+                "endAt": str(item.get("endTime", "")),
+                "category": str(item.get("category", "")),
+                "priority": str(item.get("priority", "")),
+                "status": str(item.get("status", "")),
+                "source": str(item.get("source", "")),
+            }
+            for item in raw_events
+            if isinstance(item, dict)
+        ]
+    except Exception as error:  # noqa: BLE001
+        errors.append(_format_network_error("calendar_events_query", error))
+
+    _print_calendar_events_table(user_id, events)
+
+    payload = {
+        "tool": "calendar_events_query",
+        "args": {
+            "userId": user_id,
+            "startIso": start_iso,
+            "endIso": end_iso,
+        },
+        "events": events,
+        "errors": errors,
+    }
+    print("[Python Agent Tool] Local calendar events:")
+    print(f"USER {user_id}")
+    print(f"COUNT {len(events)}")
+    print("FORMAT startAt - endAt | title | category/priority | status | source | id")
+    print("-" * 150)
+    if events:
+        for event in events:
+            print(
+                " | ".join(
+                    [
+                        f"{event.get('startAt', '')} - {event.get('endAt', '')}",
+                        str(event.get("title", "")),
+                        f"{event.get('category', '')}/{event.get('priority', '')}",
+                        str(event.get("status", "")),
+                        str(event.get("source", "")),
+                        str(event.get("id", "")),
+                    ]
+                )
+            )
+    else:
+        print("(empty)")
+    print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+    return payload
+
+
 TOOL_REGISTRY = {
     "web_search": {
         "description": "搜索外部网页。参数：q 搜索关键词，count 结果数量。",
@@ -400,6 +533,11 @@ TOOL_REGISTRY = {
         "description": "本地四则运算。参数：expr 数学表达式。",
         "parameters": {"expr": "string"},
         "handler": calculate,
+    },
+    "calendar_events_query": {
+        "description": "查询用户已有日程。参数：userId 用户ID，startIso 查询开始时间，endIso 查询结束时间。",
+        "parameters": {"userId": "string", "startIso": "string", "endIso": "string"},
+        "handler": calendar_events_query,
     },
 }
 
@@ -448,6 +586,18 @@ def dispatch_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
         if not expr:
             return {"tool": tool_name, "result": None, "errors": ["calculate: missing expr"]}
         return calculate(expr)
+
+    if tool_name == "calendar_events_query":
+        user_id = str(args.get("userId") or tool_call.get("userId") or "").strip()
+        start_iso = str(args.get("startIso") or tool_call.get("startIso") or "").strip()
+        end_iso = str(args.get("endIso") or tool_call.get("endIso") or "").strip()
+        if not user_id:
+            return {"tool": tool_name, "events": [], "errors": ["calendar_events_query: missing userId"]}
+        if not start_iso:
+            return {"tool": tool_name, "events": [], "errors": ["calendar_events_query: missing startIso"]}
+        if not end_iso:
+            return {"tool": tool_name, "events": [], "errors": ["calendar_events_query: missing endIso"]}
+        return calendar_events_query(user_id, start_iso, end_iso)
 
     return {
         "tool": tool_name,

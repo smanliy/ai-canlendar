@@ -8,7 +8,8 @@
     "dev:watch": "ts-node-dev --respawn --transpile-only index.ts",
     "typecheck": "tsc --noEmit",
     "migrate": "npx prisma migrate dev",
-    "studio": "npx prisma studio"
+    "studio": "npx prisma studio",
+    "events:print": "node scripts/print-events.js"
   },
   "prisma": {
     "schema": "./modules/db/schema.prisma"

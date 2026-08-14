@@ -4,7 +4,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .tools import research_task_duration
+from .tools import calendar_events_query, research_task_duration
 
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -42,6 +42,30 @@ def _get_deepseek_api_key() -> str:
 
 def _get_deepseek_model() -> str:
     return os.environ.get("DEEPSEEK_MODEL", "").strip() or _load_node_env_value("DEEPSEEK_MODEL") or "deepseek-v4-flash"
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def query_existing_calendar_events(payload: dict[str, Any], normalized_context: dict[str, Any]) -> dict[str, Any]:
+    user_id = str(payload.get("userId", "")).strip()
+    deadline = str(normalized_context.get("deadline", "")).strip()
+    if not user_id:
+        return {
+            "tool": "calendar_events_query",
+            "events": [],
+            "errors": ["calendar_events_query: missing userId"],
+        }
+    if not deadline:
+        return {
+            "tool": "calendar_events_query",
+            "events": [],
+            "errors": ["calendar_events_query: missing normalizedContext.deadline"],
+        }
+    return calendar_events_query(user_id, _now_iso(), deadline)
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:
@@ -284,6 +308,9 @@ def plan_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
     }
     llm_result = _call_deepseek_for_atomic_tasks(llm_payload)
     atomic_tasks = enrich_atomic_task_evidence(_normalize_atomic_tasks(llm_result.get("atomicTasks")), tool_results)
+    calendar_events_tool_result = query_existing_calendar_events(payload, normalized_context)
+    print("[Python Agent] Existing calendar events JSON:")
+    print(json.dumps(calendar_events_tool_result, ensure_ascii=False, indent=2), flush=True)
     feasibility = validate_atomic_plan(atomic_tasks, normalized_context)
     response = {
         "status": "ready" if feasibility["status"] == "ok" else "overloaded",
@@ -291,6 +318,7 @@ def plan_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
         "totalEstimatedMinutes": feasibility["requiredMinutes"],
         "feasibility": feasibility,
         "toolResults": tool_results,
+        "calendarEventsToolResult": calendar_events_tool_result,
     }
     print("[Python Agent] Atomic plan result:")
     print(json.dumps(response, ensure_ascii=False, indent=2), flush=True)

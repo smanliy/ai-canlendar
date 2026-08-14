@@ -4,7 +4,7 @@ import { App as AntApp } from 'antd';
 import { agentApi } from '../services/agentApi';
 import { eventApi } from '../services/eventApi';
 import { useAgentStore } from '../stores/agentStore';
-import type { SchedulePlanOption } from '../types/agent';
+import type { CalendarEventsToolResult, SchedulePlanOption } from '../types/agent';
 import type { EventPayload } from '../types/event';
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -21,6 +21,14 @@ function collectResearchSources(plans: SchedulePlanOption[]) {
       return Boolean(source.query || source.url || source.title);
     })
     .slice(0, 8);
+}
+
+function normalizeCalendarEventsResult(value: CalendarEventsToolResult | undefined) {
+  return {
+    events: value?.events ?? [],
+    errors: value?.errors ?? [],
+    args: value?.args ?? {}
+  };
 }
 
 export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
@@ -60,7 +68,14 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
           researchSources: collectResearchSources(result.plans)
         });
 
-        for (const stepId of ['step-3', 'step-4', 'step-5', 'step-6']) {
+        updateStep('step-3', 'running');
+        await sleep(240);
+        updateStep('step-3', 'success', {
+          message: '已查询用户本地日程',
+          calendarEventsResult: normalizeCalendarEventsResult(result.calendarEventsToolResult)
+        });
+
+        for (const stepId of ['step-4', 'step-5', 'step-6']) {
           updateStep(stepId, 'running');
           await sleep(240);
           updateStep(stepId, 'success', { message: '节点处理完成' });

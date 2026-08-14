@@ -696,6 +696,81 @@ button {
   font-size: 0.76rem;
 }
 
+.agent-calendar-event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.agent-calendar-range {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.14);
+  color: #bfdbfe;
+  font-size: 0.78rem;
+  margin-top: 0.65rem;
+  padding: 0.28rem 0.55rem;
+}
+
+.agent-calendar-event-item,
+.agent-calendar-empty {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #d1d5db;
+  padding: 0.55rem 0.65rem;
+}
+
+.agent-calendar-event-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) auto;
+  gap: 0.2rem 0.75rem;
+}
+
+.agent-calendar-event-item strong,
+.agent-calendar-event-item span,
+.agent-calendar-event-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-calendar-event-item strong {
+  color: #f9fafb;
+  font-size: 0.84rem;
+}
+
+.agent-calendar-event-item span {
+  color: #bfdbfe;
+  font-size: 0.78rem;
+}
+
+.agent-calendar-event-item small {
+  grid-column: 1 / -1;
+  color: #9ca3af;
+  font-size: 0.76rem;
+}
+
+.agent-calendar-empty {
+  color: #9ca3af;
+  font-size: 0.8rem;
+}
+
+.agent-calendar-error-list {
+  margin: 0.6rem 0 0;
+  color: #fecaca;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  padding-left: 1.1rem;
+}
+
 .chat-plan-actions {
   display: grid;
   width: 100%;

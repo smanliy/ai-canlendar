@@ -2,6 +2,7 @@ import { CheckCircleFilled, CloseCircleFilled, GlobalOutlined, LoadingOutlined, 
 import { Alert, Button, Input, Space } from 'antd';
 
 import { useAgentStore } from '../../stores/agentStore';
+import type { LocalCalendarEvent } from '../../types/agent';
 import { PlanOptionDeck } from './PlanOptionDeck';
 
 interface AgentChatPanelProps {
@@ -50,6 +51,44 @@ function readStepMessage(output: unknown): string {
   if (!output || typeof output !== 'object' || !('message' in output)) return '';
   const value = (output as { message?: unknown }).message;
   return typeof value === 'string' ? value : '';
+}
+
+function readCalendarEvents(output: unknown): { events: LocalCalendarEvent[]; errors: string[]; args: { startIso?: string; endIso?: string } } {
+  if (!output || typeof output !== 'object' || !('calendarEventsResult' in output)) return { events: [], errors: [], args: {} };
+  const value = (output as { calendarEventsResult?: unknown }).calendarEventsResult;
+  if (!value || typeof value !== 'object') return { events: [], errors: [], args: {} };
+  const events = (value as { events?: unknown }).events;
+  const errors = (value as { errors?: unknown }).errors;
+  const args = (value as { args?: unknown }).args;
+  const startIso = args && typeof args === 'object' && typeof (args as { startIso?: unknown }).startIso === 'string' ? (args as { startIso: string }).startIso : undefined;
+  const endIso = args && typeof args === 'object' && typeof (args as { endIso?: unknown }).endIso === 'string' ? (args as { endIso: string }).endIso : undefined;
+  return {
+    events: Array.isArray(events) ? (events as LocalCalendarEvent[]) : [],
+    errors: Array.isArray(errors) ? errors.map(String) : [],
+    args: { startIso, endIso }
+  };
+}
+
+function formatCalendarTime(value: string | undefined) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+    .format(date)
+    .replace(/\//g, '-');
+}
+
+function formatCalendarRange(output: unknown) {
+  const { args } = readCalendarEvents(output);
+  if (!args.startIso || !args.endIso) return '查询范围：未返回';
+  return `查询范围：${formatCalendarTime(args.startIso)} - ${formatCalendarTime(args.endIso)}`;
 }
 
 export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, variant = 'compact' }: AgentChatPanelProps) {
@@ -132,6 +171,37 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, vari
                           ))}
                         </div>
                       ) : null}
+                    </div>
+                  ) : null}
+
+                  {step.id === 'step-3' && step.status !== 'pending' ? (
+                    <div className="agent-tool-trace-panel">
+                      <p>{readStepMessage(step.output) || '已查询用户本地日程'}</p>
+                      <div className="agent-calendar-range">{formatCalendarRange(step.output)}</div>
+                      {readCalendarEvents(step.output).errors.length > 0 ? (
+                        <ul className="agent-calendar-error-list">
+                          {readCalendarEvents(step.output).errors.map((error) => (
+                            <li key={error}>{error}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <div className="agent-calendar-event-list">
+                        {readCalendarEvents(step.output).events.length > 0 ? (
+                          readCalendarEvents(step.output).events.map((event, eventIndex) => (
+                            <div className="agent-calendar-event-item" key={`${event.id ?? event.title}-${eventIndex}`}>
+                              <strong>{event.title || '未命名日程'}</strong>
+                              <span>
+                                {formatCalendarTime(event.startAt || event.startTime)} - {formatCalendarTime(event.endAt || event.endTime)}
+                              </span>
+                              <small>
+                                {(event.category || '未分类')}/{event.priority || '未设置'} · {event.status || '未知状态'} · {event.source || 'unknown'}
+                              </small>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="agent-calendar-empty">当前查询范围内没有已有日程。</div>
+                        )}
+                      </div>
                     </div>
                   ) : null}
 

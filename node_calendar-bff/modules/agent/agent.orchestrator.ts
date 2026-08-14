@@ -378,6 +378,7 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
     pythonAgentAck,
     plans,
     plan: plans[0],
-    conflicts: []
+    conflicts: [],
+    calendarEventsToolResult: atomicPlan.calendarEventsToolResult
   };
 }

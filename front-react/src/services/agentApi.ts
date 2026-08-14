@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 
 import { useAuthStore } from '../stores/authStore';
-import type { AgentRunDetail, AgentRunStep, AgentRunStatus, AgentUserPreference, SchedulePlan, SchedulePlanOption } from '../types/agent';
+import type { AgentRunDetail, AgentRunStep, AgentRunStatus, AgentUserPreference, CalendarEventsToolResult, SchedulePlan, SchedulePlanOption } from '../types/agent';
 
 interface ApiResponse<T> {
   code: number;
@@ -24,6 +24,7 @@ export type SchedulePlanResult =
       plans: SchedulePlanOption[];
       plan: SchedulePlan;
       conflicts: { id: string; message: string }[];
+      calendarEventsToolResult?: CalendarEventsToolResult;
     };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
@@ -136,6 +137,7 @@ export const agentApi = {
       plan?: SchedulePlan;
       conflicts?: { id: string; message: string }[];
       pythonAgentAck?: { message: string };
+      calendarEventsToolResult?: CalendarEventsToolResult;
     }>('/agent/runs', {
       method: 'POST',
       body: JSON.stringify({ input, clarificationJson })
@@ -161,7 +163,8 @@ export const agentApi = {
       runId: data.runId,
       plans: data.plans,
       plan: data.plan,
-      conflicts: data.conflicts
+      conflicts: data.conflicts,
+      calendarEventsToolResult: data.calendarEventsToolResult
     };
   },
 

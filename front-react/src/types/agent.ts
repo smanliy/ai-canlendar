@@ -29,6 +29,30 @@ export interface AgentUserPreference {
   timezone: string;
 }
 
+export interface LocalCalendarEvent {
+  id?: string;
+  title?: string;
+  startAt?: string;
+  endAt?: string;
+  startTime?: string;
+  endTime?: string;
+  category?: string;
+  priority?: string;
+  status?: string;
+  source?: string;
+}
+
+export interface CalendarEventsToolResult {
+  tool?: string;
+  args?: {
+    userId?: string;
+    startIso?: string;
+    endIso?: string;
+  };
+  events?: LocalCalendarEvent[];
+  errors?: string[];
+}
+
 export interface PlanItem {
   id: string;
   title: string;

@@ -96,6 +96,7 @@ export interface AgentRunResponse {
   plans: SchedulePlanOption[];
   plan: SchedulePlanOption;
   conflicts: AgentConflict[];
+  calendarEventsToolResult?: unknown;
 }
 
 export interface AgentClarificationResponse {
