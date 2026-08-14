@@ -4,7 +4,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .tools import calendar_events_query, research_task_duration
+from .tools import calculate_free_windows, calendar_events_query, research_task_duration
 
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -66,6 +66,24 @@ def query_existing_calendar_events(payload: dict[str, Any], normalized_context: 
             "errors": ["calendar_events_query: missing normalizedContext.deadline"],
         }
     return calendar_events_query(user_id, _now_iso(), deadline)
+
+
+def calculate_available_free_windows(
+    payload: dict[str, Any],
+    calendar_events_tool_result: dict[str, Any],
+) -> dict[str, Any]:
+    args = calendar_events_tool_result.get("args") if isinstance(calendar_events_tool_result.get("args"), dict) else {}
+    start_iso = str(args.get("startIso", "")).strip()
+    end_iso = str(args.get("endIso", "")).strip()
+    calendar_events = calendar_events_tool_result.get("events") if isinstance(calendar_events_tool_result.get("events"), list) else []
+    user_preference = payload.get("userPreference") if isinstance(payload.get("userPreference"), dict) else {}
+    return calculate_free_windows(
+        start_iso=start_iso,
+        end_iso=end_iso,
+        calendar_events=calendar_events,
+        user_preference=user_preference,
+        draft_allocations=[],
+    )
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:
@@ -311,6 +329,9 @@ def plan_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
     calendar_events_tool_result = query_existing_calendar_events(payload, normalized_context)
     print("[Python Agent] Existing calendar events JSON:")
     print(json.dumps(calendar_events_tool_result, ensure_ascii=False, indent=2), flush=True)
+    free_windows_tool_result = calculate_available_free_windows(payload, calendar_events_tool_result)
+    print("[Python Agent] Free windows result JSON:")
+    print(json.dumps(free_windows_tool_result, ensure_ascii=False, indent=2), flush=True)
     feasibility = validate_atomic_plan(atomic_tasks, normalized_context)
     response = {
         "status": "ready" if feasibility["status"] == "ok" else "overloaded",
@@ -319,6 +340,7 @@ def plan_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
         "feasibility": feasibility,
         "toolResults": tool_results,
         "calendarEventsToolResult": calendar_events_tool_result,
+        "freeWindowsToolResult": free_windows_tool_result,
     }
     print("[Python Agent] Atomic plan result:")
     print(json.dumps(response, ensure_ascii=False, indent=2), flush=True)

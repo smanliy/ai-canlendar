@@ -12,6 +12,7 @@ from pathlib import Path
 from socket import timeout as SocketTimeout
 from typing import Any
 from urllib.error import HTTPError, URLError
+from zoneinfo import ZoneInfo
 
 
 class _DuckDuckGoResultParser(HTMLParser):
@@ -518,6 +519,245 @@ def calendar_events_query(user_id: str, start_iso: str, end_iso: str) -> dict[st
     return payload
 
 
+def _parse_iso_datetime(value: str) -> datetime:
+    text = value.strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _read_time_parts(value: Any, fallback: str) -> tuple[int, int]:
+    text = str(value or fallback).strip()
+    match = re.match(r"^(\d{1,2}):(\d{2})$", text)
+    if not match:
+        text = fallback
+        match = re.match(r"^(\d{1,2}):(\d{2})$", text)
+    hour = max(0, min(23, int(match.group(1)))) if match else 19
+    minute = max(0, min(59, int(match.group(2)))) if match else 0
+    return hour, minute
+
+
+def _read_positive_minutes(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and value > 0:
+        return int(round(value))
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _event_interval(event: dict[str, Any], tz: ZoneInfo) -> tuple[datetime, datetime] | None:
+    start_raw = str(event.get("startAt") or event.get("startTime") or "").strip()
+    end_raw = str(event.get("endAt") or event.get("endTime") or "").strip()
+    if not start_raw or not end_raw:
+        return None
+    try:
+        start = _parse_iso_datetime(start_raw).astimezone(tz)
+        end = _parse_iso_datetime(end_raw).astimezone(tz)
+    except ValueError:
+        return None
+    if end <= start:
+        return None
+    return start, end
+
+
+def _subtract_busy_intervals(
+    window_start: datetime,
+    window_end: datetime,
+    busy_intervals: list[tuple[datetime, datetime]],
+) -> list[tuple[datetime, datetime]]:
+    free_segments = [(window_start, window_end)]
+    for busy_start, busy_end in sorted(busy_intervals, key=lambda item: item[0]):
+        next_segments: list[tuple[datetime, datetime]] = []
+        for free_start, free_end in free_segments:
+            if busy_end <= free_start or busy_start >= free_end:
+                next_segments.append((free_start, free_end))
+                continue
+            if busy_start > free_start:
+                next_segments.append((free_start, min(busy_start, free_end)))
+            if busy_end < free_end:
+                next_segments.append((max(busy_end, free_start), free_end))
+        free_segments = next_segments
+    return free_segments
+
+
+def _split_and_label_free_segment(
+    free_start: datetime,
+    free_end: datetime,
+    golden_start: datetime,
+    golden_end: datetime,
+) -> list[dict[str, Any]]:
+    boundaries = [free_start, free_end]
+    if free_start < golden_start < free_end:
+        boundaries.append(golden_start)
+    if free_start < golden_end < free_end:
+        boundaries.append(golden_end)
+    boundaries = sorted(set(boundaries))
+
+    windows: list[dict[str, Any]] = []
+    for index in range(len(boundaries) - 1):
+        start = boundaries[index]
+        end = boundaries[index + 1]
+        if end <= start:
+            continue
+        is_golden = start >= golden_start and end <= golden_end
+        windows.append(
+            {
+                "startIso": start.isoformat(),
+                "endIso": end.isoformat(),
+                "minutes": int((end - start).total_seconds() // 60),
+                "date": start.date().isoformat(),
+                "windowType": "golden" if is_golden else "flexible",
+                "isGoldenTime": is_golden,
+                "source": "schedulable_day_window_minus_calendar_events",
+            }
+        )
+    return windows
+
+
+def calculate_free_windows(
+    start_iso: str,
+    end_iso: str,
+    calendar_events: list[dict[str, Any]],
+    user_preference: dict[str, Any],
+    draft_allocations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    free_windows: list[dict[str, Any]] = []
+    timezone_name = str(user_preference.get("timezone") or "Asia/Shanghai").strip()
+    try:
+        tz = ZoneInfo(timezone_name)
+    except Exception:  # noqa: BLE001
+        tz = ZoneInfo("Asia/Shanghai")
+        errors.append(f"calculate_free_windows: invalid timezone {timezone_name}, fallback Asia/Shanghai")
+
+    try:
+        range_start = _parse_iso_datetime(start_iso).astimezone(tz)
+        range_end = _parse_iso_datetime(end_iso).astimezone(tz)
+    except ValueError as error:
+        return {
+            "tool": "calculate_free_windows",
+            "args": {"startIso": start_iso, "endIso": end_iso, "timezone": timezone_name},
+            "freeWindows": [],
+            "totalFreeMinutes": 0,
+            "errors": [f"calculate_free_windows: invalid ISO range: {error}"],
+        }
+
+    if range_end <= range_start:
+        return {
+            "tool": "calculate_free_windows",
+            "args": {"startIso": start_iso, "endIso": end_iso, "timezone": timezone_name},
+            "freeWindows": [],
+            "totalFreeMinutes": 0,
+            "errors": ["calculate_free_windows: endIso must be after startIso"],
+        }
+
+    schedulable_start_hour, schedulable_start_minute = _read_time_parts(
+        user_preference.get("schedulableStartTime") or user_preference.get("dayStartTime"),
+        "08:00",
+    )
+    schedulable_end_hour, schedulable_end_minute = _read_time_parts(
+        user_preference.get("schedulableEndTime") or user_preference.get("nightStartTime"),
+        "23:00",
+    )
+    golden_start_hour, golden_start_minute = _read_time_parts(user_preference.get("preferredStartTime"), "19:00")
+    golden_end_hour, golden_end_minute = _read_time_parts(user_preference.get("preferredEndTime"), "23:00")
+    daily_limit = _read_positive_minutes(user_preference.get("dailyFocusLimitMinutes"))
+    avoid_weekends = bool(user_preference.get("avoidWeekends", False))
+    min_window_minutes = _read_positive_minutes(user_preference.get("minWindowMinutes")) or 20
+
+    busy_events = [item for item in calendar_events if isinstance(item, dict)]
+    busy_events.extend([item for item in (draft_allocations or []) if isinstance(item, dict)])
+    busy_intervals = [interval for event in busy_events if (interval := _event_interval(event, tz))]
+
+    current_day = range_start.date()
+    last_day = range_end.date()
+    while current_day <= last_day:
+        weekday = current_day.weekday()
+        if avoid_weekends and weekday >= 5:
+            current_day += timedelta(days=1)
+            continue
+
+        day_start = datetime(
+            current_day.year,
+            current_day.month,
+            current_day.day,
+            schedulable_start_hour,
+            schedulable_start_minute,
+            tzinfo=tz,
+        )
+        day_end = datetime(
+            current_day.year,
+            current_day.month,
+            current_day.day,
+            schedulable_end_hour,
+            schedulable_end_minute,
+            tzinfo=tz,
+        )
+        if day_end <= day_start:
+            day_end += timedelta(days=1)
+        golden_start = datetime(
+            current_day.year,
+            current_day.month,
+            current_day.day,
+            golden_start_hour,
+            golden_start_minute,
+            tzinfo=tz,
+        )
+        golden_end = datetime(
+            current_day.year,
+            current_day.month,
+            current_day.day,
+            golden_end_hour,
+            golden_end_minute,
+            tzinfo=tz,
+        )
+        if golden_end <= golden_start:
+            golden_end += timedelta(days=1)
+
+        window_start = max(day_start, range_start)
+        window_end = min(day_end, range_end)
+
+        if window_end > window_start:
+            for free_start, free_end in _subtract_busy_intervals(window_start, window_end, busy_intervals):
+                for labeled_window in _split_and_label_free_segment(free_start, free_end, golden_start, golden_end):
+                    if labeled_window["minutes"] >= min_window_minutes:
+                        free_windows.append(labeled_window)
+        current_day += timedelta(days=1)
+
+    total_free_minutes = sum(item["minutes"] for item in free_windows)
+    total_golden_minutes = sum(item["minutes"] for item in free_windows if item.get("isGoldenTime"))
+    total_flexible_minutes = total_free_minutes - total_golden_minutes
+
+    payload = {
+        "tool": "calculate_free_windows",
+        "args": {
+            "startIso": start_iso,
+            "endIso": end_iso,
+            "timezone": timezone_name,
+            "schedulableStartTime": f"{schedulable_start_hour:02d}:{schedulable_start_minute:02d}",
+            "schedulableEndTime": f"{schedulable_end_hour:02d}:{schedulable_end_minute:02d}",
+            "goldenStartTime": f"{golden_start_hour:02d}:{golden_start_minute:02d}",
+            "goldenEndTime": f"{golden_end_hour:02d}:{golden_end_minute:02d}",
+            "dailyFocusLimitMinutes": daily_limit,
+            "avoidWeekends": avoid_weekends,
+            "minWindowMinutes": min_window_minutes,
+        },
+        "freeWindows": free_windows,
+        "totalFreeMinutes": total_free_minutes,
+        "totalGoldenMinutes": total_golden_minutes,
+        "totalFlexibleMinutes": total_flexible_minutes,
+        "errors": errors,
+    }
+    print("[Python Agent Tool] Free windows JSON:")
+    print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+    return payload
+
+
 TOOL_REGISTRY = {
     "web_search": {
         "description": "搜索外部网页。参数：q 搜索关键词，count 结果数量。",
@@ -538,6 +778,17 @@ TOOL_REGISTRY = {
         "description": "查询用户已有日程。参数：userId 用户ID，startIso 查询开始时间，endIso 查询结束时间。",
         "parameters": {"userId": "string", "startIso": "string", "endIso": "string"},
         "handler": calendar_events_query,
+    },
+    "calculate_free_windows": {
+        "description": "根据查询范围、用户已有日程、用户偏好和草稿占用计算空闲时间。",
+        "parameters": {
+            "startIso": "string",
+            "endIso": "string",
+            "calendarEvents": "array",
+            "userPreference": "object",
+            "draftAllocations": "array",
+        },
+        "handler": calculate_free_windows,
     },
 }
 
@@ -598,6 +849,24 @@ def dispatch_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
         if not end_iso:
             return {"tool": tool_name, "events": [], "errors": ["calendar_events_query: missing endIso"]}
         return calendar_events_query(user_id, start_iso, end_iso)
+
+    if tool_name == "calculate_free_windows":
+        start_iso = str(args.get("startIso") or tool_call.get("startIso") or "").strip()
+        end_iso = str(args.get("endIso") or tool_call.get("endIso") or "").strip()
+        calendar_events = args.get("calendarEvents") or tool_call.get("calendarEvents") or []
+        user_preference = args.get("userPreference") or tool_call.get("userPreference") or {}
+        draft_allocations = args.get("draftAllocations") or tool_call.get("draftAllocations") or []
+        if not start_iso:
+            return {"tool": tool_name, "freeWindows": [], "errors": ["calculate_free_windows: missing startIso"]}
+        if not end_iso:
+            return {"tool": tool_name, "freeWindows": [], "errors": ["calculate_free_windows: missing endIso"]}
+        if not isinstance(calendar_events, list):
+            return {"tool": tool_name, "freeWindows": [], "errors": ["calculate_free_windows: calendarEvents must be array"]}
+        if not isinstance(user_preference, dict):
+            return {"tool": tool_name, "freeWindows": [], "errors": ["calculate_free_windows: userPreference must be object"]}
+        if not isinstance(draft_allocations, list):
+            return {"tool": tool_name, "freeWindows": [], "errors": ["calculate_free_windows: draftAllocations must be array"]}
+        return calculate_free_windows(start_iso, end_iso, calendar_events, user_preference, draft_allocations)
 
     return {
         "tool": tool_name,

@@ -42,6 +42,7 @@ export interface PythonPlanResult {
   };
   toolResults?: unknown;
   calendarEventsToolResult?: unknown;
+  freeWindowsToolResult?: unknown;
 }
 
 export interface PythonAgentAck {

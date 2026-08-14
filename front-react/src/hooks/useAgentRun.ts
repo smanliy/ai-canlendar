@@ -4,7 +4,7 @@ import { App as AntApp } from 'antd';
 import { agentApi } from '../services/agentApi';
 import { eventApi } from '../services/eventApi';
 import { useAgentStore } from '../stores/agentStore';
-import type { CalendarEventsToolResult, SchedulePlanOption } from '../types/agent';
+import type { CalendarEventsToolResult, FreeWindowsToolResult, SchedulePlanOption } from '../types/agent';
 import type { EventPayload } from '../types/event';
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -28,6 +28,16 @@ function normalizeCalendarEventsResult(value: CalendarEventsToolResult | undefin
     events: value?.events ?? [],
     errors: value?.errors ?? [],
     args: value?.args ?? {}
+  };
+}
+
+function normalizeFreeWindowsResult(value: FreeWindowsToolResult | undefined) {
+  return {
+    tool: value?.tool ?? 'calculate_free_windows',
+    args: value?.args ?? {},
+    freeWindows: value?.freeWindows ?? [],
+    totalFreeMinutes: value?.totalFreeMinutes ?? 0,
+    errors: value?.errors ?? []
   };
 }
 
@@ -75,7 +85,14 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
           calendarEventsResult: normalizeCalendarEventsResult(result.calendarEventsToolResult)
         });
 
-        for (const stepId of ['step-4', 'step-5', 'step-6']) {
+        updateStep('step-4', 'running');
+        await sleep(240);
+        updateStep('step-4', 'success', {
+          message: '已根据本地日程和用户偏好计算空闲时间',
+          freeWindowsResult: normalizeFreeWindowsResult(result.freeWindowsToolResult)
+        });
+
+        for (const stepId of ['step-5', 'step-6']) {
           updateStep(stepId, 'running');
           await sleep(240);
           updateStep(stepId, 'success', { message: '节点处理完成' });

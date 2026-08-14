@@ -379,6 +379,7 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
     plans,
     plan: plans[0],
     conflicts: [],
-    calendarEventsToolResult: atomicPlan.calendarEventsToolResult
+    calendarEventsToolResult: atomicPlan.calendarEventsToolResult,
+    freeWindowsToolResult: atomicPlan.freeWindowsToolResult
   };
 }

@@ -97,6 +97,7 @@ export interface AgentRunResponse {
   plan: SchedulePlanOption;
   conflicts: AgentConflict[];
   calendarEventsToolResult?: unknown;
+  freeWindowsToolResult?: unknown;
 }
 
 export interface AgentClarificationResponse {

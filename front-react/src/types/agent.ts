@@ -53,6 +53,37 @@ export interface CalendarEventsToolResult {
   errors?: string[];
 }
 
+export interface FreeWindow {
+  startIso: string;
+  endIso: string;
+  minutes: number;
+  date?: string;
+  windowType?: 'golden' | 'flexible';
+  isGoldenTime?: boolean;
+  source?: string;
+}
+
+export interface FreeWindowsToolResult {
+  tool?: string;
+  args?: {
+    startIso?: string;
+    endIso?: string;
+    timezone?: string;
+    schedulableStartTime?: string;
+    schedulableEndTime?: string;
+    goldenStartTime?: string;
+    goldenEndTime?: string;
+    dailyFocusLimitMinutes?: number | null;
+    avoidWeekends?: boolean;
+    minWindowMinutes?: number;
+  };
+  freeWindows?: FreeWindow[];
+  totalFreeMinutes?: number;
+  totalGoldenMinutes?: number;
+  totalFlexibleMinutes?: number;
+  errors?: string[];
+}
+
 export interface PlanItem {
   id: string;
   title: string;

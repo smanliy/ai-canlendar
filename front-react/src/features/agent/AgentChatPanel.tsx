@@ -91,6 +91,13 @@ function formatCalendarRange(output: unknown) {
   return `查询范围：${formatCalendarTime(args.startIso)} - ${formatCalendarTime(args.endIso)}`;
 }
 
+function readFreeWindowsJson(output: unknown) {
+  if (!output || typeof output !== 'object' || !('freeWindowsResult' in output)) return '';
+  const value = (output as { freeWindowsResult?: unknown }).freeWindowsResult;
+  if (!value || typeof value !== 'object') return '';
+  return JSON.stringify(value, null, 2);
+}
+
 export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, variant = 'compact' }: AgentChatPanelProps) {
   const userInput = useAgentStore((state) => state.userInput);
   const revisionInput = useAgentStore((state) => state.revisionInput);
@@ -202,6 +209,13 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, vari
                           <div className="agent-calendar-empty">当前查询范围内没有已有日程。</div>
                         )}
                       </div>
+                    </div>
+                  ) : null}
+
+                  {step.id === 'step-4' && step.status !== 'pending' ? (
+                    <div className="agent-tool-trace-panel">
+                      <p>{readStepMessage(step.output) || '已计算空闲时间'}</p>
+                      <pre className="agent-json-result-box">{readFreeWindowsJson(step.output) || '{\n  "freeWindows": [],\n  "errors": ["空闲时间结果未返回"]\n}'}</pre>
                     </div>
                   ) : null}
 
