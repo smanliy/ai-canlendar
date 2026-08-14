@@ -1,11 +1,13 @@
 import { prisma } from '../db/prisma';
 import { parseTaskWithDeepSeek } from './deepseek';
-import { sendTaskToPythonAgent } from './python-agent';
-import type { AgentRunResponse, AgentUserPreference, ParsedScheduleTask, ParsedSubtask, PlanItem, SchedulePlanOption } from './agent.types';
+import { extractAgentFieldsWithDeepSeek, type AgentFieldExtraction } from './field-extractor';
+import { planAtomicTasksWithPython, sendTaskToPythonAgent, validateAgentFieldsWithPython, type PythonPlanResult } from './python-agent';
+import type { AgentCreateRunResponse, AgentUserPreference, ParsedScheduleTask, ParsedSubtask, PlanItem, SchedulePlanOption } from './agent.types';
 
 interface RunScheduleAgentInput {
   userId: string;
   input: string;
+  clarificationJson?: unknown;
 }
 
 type UserPreferenceLike = AgentUserPreference;
@@ -72,6 +74,10 @@ function nextWorkDate(base: Date, offset: number, avoidWeekends: boolean): Date 
     date = addDays(date, 1);
   }
   return date;
+}
+
+function nextScheduleDate(base: Date, avoidWeekends: boolean): Date {
+  return nextWorkDate(base, 1, avoidWeekends);
 }
 
 function buildFallbackSubtasks(taskName: string, totalMinutes: number, preference: UserPreferenceLike): ParsedSubtask[] {
@@ -164,7 +170,8 @@ function scheduleSubtasks(parsedTask: ParsedScheduleTask, preference: UserPrefer
   const preferredStart = parseClock(parsedTask.constraints.preferredStartTime || preference.preferredStartTime);
   const preferredEnd = parseClock(parsedTask.constraints.preferredEndTime || preference.preferredEndTime);
   const windowMinutes = Math.max(30, preferredEnd - preferredStart);
-  let currentDayOffset = 1;
+  const avoidWeekends = Boolean(parsedTask.constraints.avoidWeekends ?? preference.avoidWeekends);
+  let currentDate = nextScheduleDate(new Date(), avoidWeekends);
   let usedMinutesToday = 0;
 
   return subtasks.map((subtask) => {
@@ -180,17 +187,16 @@ function scheduleSubtasks(parsedTask: ParsedScheduleTask, preference: UserPrefer
 
     const duration = Math.max(1, subtask.minutes);
     if (usedMinutesToday + duration > windowMinutes || usedMinutesToday + duration > preference.dailyFocusLimitMinutes) {
-      currentDayOffset += 1;
+      currentDate = nextScheduleDate(currentDate, avoidWeekends);
       usedMinutesToday = 0;
     }
 
-    const date = nextWorkDate(new Date(), currentDayOffset, Boolean(parsedTask.constraints.avoidWeekends ?? preference.avoidWeekends));
     const startMinute = preferredStart + usedMinutesToday;
     const endMinute = startMinute + duration;
     usedMinutesToday += duration;
 
-    const startAt = new Date(date.getFullYear(), date.getMonth(), date.getDate(), Math.floor(startMinute / 60), startMinute % 60, 0);
-    const endAt = new Date(date.getFullYear(), date.getMonth(), date.getDate(), Math.floor(endMinute / 60), endMinute % 60, 0);
+    const startAt = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), Math.floor(startMinute / 60), startMinute % 60, 0);
+    const endAt = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), Math.floor(endMinute / 60), endMinute % 60, 0);
 
     return {
       ...subtask,
@@ -230,7 +236,8 @@ function buildItems(parsedTask: ParsedScheduleTask, preference: UserPreferenceLi
       endAt: subtask.endAt,
       durationHours: Math.round((subtask.minutes / 60) * 10) / 10,
       category,
-      priority: parsedTask.priority
+      priority: parsedTask.priority,
+      evidence: subtask.evidence
     };
   });
 }
@@ -258,13 +265,106 @@ function buildPlans(parsedTask: ParsedScheduleTask, preference: UserPreferenceLi
   }));
 }
 
-export async function runScheduleAgent({ userId, input }: RunScheduleAgentInput): Promise<AgentRunResponse> {
+function buildInputWithAgentContext(input: string, normalizedContext: unknown): string {
+  if (!normalizedContext) return input;
+  return [
+    input,
+    '',
+    'Python agent normalized context:',
+    JSON.stringify(normalizedContext)
+  ].join('\n');
+}
+
+function readNumber(value: unknown): number | undefined {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) && numberValue > 0 ? Math.round(numberValue) : undefined;
+}
+
+function buildParsedTaskFromAtomicPlan(input: string, normalizedContext: Record<string, unknown>, preference: UserPreferenceLike, planResult: PythonPlanResult): ParsedScheduleTask {
+  const deadline = typeof normalizedContext.deadline === 'string' && !Number.isNaN(Date.parse(normalizedContext.deadline)) ? normalizedContext.deadline : new Date().toISOString();
+  const totalMinutes = readNumber(normalizedContext.totalMinutes) || planResult.totalEstimatedMinutes || 120;
+  const taskName = extractTaskName(input);
+
+  return {
+    taskName,
+    deadline,
+    totalMinutes,
+    priority: '中',
+    constraints: {
+      avoidWeekends: preference.avoidWeekends,
+      preferredTimeOfDay: 'any',
+      preferredStartTime: preference.preferredStartTime,
+      preferredEndTime: preference.preferredEndTime
+    },
+    subtasks: planResult.atomicTasks.map((task, index) => ({
+      title: task.title,
+      minutes: Math.max(1, Math.round(Number(task.plannedMinutes || 30))),
+      order: Number.isFinite(Number(task.order)) ? Math.round(Number(task.order)) : index + 1,
+      durationRangeMinutes: task.durationRangeMinutes,
+      dependsOn: task.dependsOn,
+      evidence: task.evidence
+    }))
+  };
+}
+
+async function convertFieldsWithLlm(input: string, preference: UserPreferenceLike, clarificationJson: unknown, nowIso: string): Promise<AgentFieldExtraction> {
+  try {
+    return await extractAgentFieldsWithDeepSeek(input, {
+      nowIso,
+      userPreference: preference,
+      clarificationJson
+    });
+  } catch (error) {
+    console.error('[Agent] LLM field conversion failed:', error instanceof Error ? error.message : error);
+    throw error;
+  }
+}
+
+export async function runScheduleAgent({ userId, input, clarificationJson }: RunScheduleAgentInput): Promise<AgentCreateRunResponse> {
   const preference = await getPreference(userId);
-  const parsedTask = ensureScheduleShape(await parseTask(input, preference), preference);
-  const pythonAgentAck = await sendTaskToPythonAgent({
+  const nowIso = new Date().toISOString();
+
+  const llmExtraction = await convertFieldsWithLlm(input, preference, clarificationJson, nowIso);
+
+  const validation = await validateAgentFieldsWithPython({
     userId,
     rawInput: input,
     userPreference: preference,
+    llmExtraction,
+    clarificationJson
+  });
+
+  if (validation.status === 'needsUserInput') {
+    return {
+      runId: `run-${Date.now()}`,
+      status: 'needsUserInput',
+      rawInput: input,
+      message: validation.message,
+      reasons: validation.reasons,
+      clarificationJson: validation.clarificationJson
+    };
+  }
+
+  const normalizedContext = validation.normalizedContext;
+  const enrichedInput = buildInputWithAgentContext(input, normalizedContext);
+  const atomicPlan = await planAtomicTasksWithPython({
+    userId,
+    rawInput: input,
+    userPreference: preference,
+    normalizedContext
+  });
+  if (atomicPlan.status === 'failed') {
+    throw new Error(`Python Agent 工具规划失败：${atomicPlan.feasibility.issues.join('；') || '请检查外部搜索工具配置'}`);
+  }
+  if (atomicPlan.status === 'overloaded') {
+    throw new Error(`任务体量超过可用时长：${atomicPlan.feasibility.issues.join('；') || '请删减任务、增加可用时间或延后截止日期'}`);
+  }
+  const parsedTask = ensureScheduleShape(buildParsedTaskFromAtomicPlan(input, normalizedContext, preference, atomicPlan), preference);
+  const pythonAgentAck = await sendTaskToPythonAgent({
+    userId,
+    rawInput: enrichedInput,
+    userPreference: preference,
+    normalizedContext,
     parsedTask
   });
   const plans = buildPlans(parsedTask, preference);
@@ -272,7 +372,7 @@ export async function runScheduleAgent({ userId, input }: RunScheduleAgentInput)
   return {
     runId: `run-${Date.now()}`,
     status: 'waitingConfirm',
-    rawInput: input,
+    rawInput: enrichedInput,
     userPreference: preference,
     parsedTask,
     pythonAgentAck,

@@ -1,7 +1,7 @@
 import type { EventCategory, EventPriority } from './event';
 
 export type AgentStepStatus = 'pending' | 'running' | 'success' | 'failed';
-export type AgentRunStatus = 'idle' | 'running' | 'success' | 'failed' | 'waitingConfirm';
+export type AgentRunStatus = 'idle' | 'running' | 'success' | 'failed' | 'waitingConfirm' | 'needsUserInput';
 
 export interface AgentRunStep {
   id: string;
@@ -12,6 +12,12 @@ export interface AgentRunStep {
   error?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AgentClarification {
+  message: string;
+  reasons: string[];
+  clarificationJson: Record<string, unknown>;
 }
 
 export interface AgentUserPreference {
@@ -33,6 +39,14 @@ export interface PlanItem {
   durationHours: number;
   category: EventCategory;
   priority: EventPriority;
+  evidence?: Array<{
+    title?: string;
+    url?: string;
+    snippet?: string;
+    tool?: string;
+    query?: string;
+    provider?: string;
+  }>;
 }
 
 export interface SchedulePlan {

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { createInitialSteps } from '../services/agentApi';
-import type { AgentConflict, AgentRunStatus, AgentRunStep, SchedulePlan, SchedulePlanOption } from '../types/agent';
+import type { AgentClarification, AgentConflict, AgentRunStatus, AgentRunStep, SchedulePlan, SchedulePlanOption } from '../types/agent';
 
 interface AgentState {
   currentRunId: string | null;
@@ -14,6 +14,8 @@ interface AgentState {
   planOptions: SchedulePlanOption[];
   selectedPlanId: string | null;
   conflicts: AgentConflict[];
+  clarification: AgentClarification | null;
+  clarificationInput: Record<string, string>;
   confirmLoading: boolean;
   setUserInput: (value: string) => void;
   setRevisionInput: (value: string) => void;
@@ -22,6 +24,9 @@ interface AgentState {
   updateStep: (stepId: string, status: AgentRunStep['status'], output?: unknown) => void;
   setPlan: (plan: SchedulePlan, conflicts: AgentConflict[]) => void;
   setPlanOptions: (plans: SchedulePlanOption[], conflicts: AgentConflict[]) => void;
+  setClarification: (clarification: AgentClarification | null) => void;
+  setClarificationInput: (field: string, value: string) => void;
+  clearClarification: () => void;
   selectPlan: (planId: string | null) => void;
   setRunStatus: (status: AgentRunStatus) => void;
   setConfirmLoading: (loading: boolean) => void;
@@ -38,6 +43,8 @@ export const useAgentStore = create<AgentState>()(
     planOptions: [],
     selectedPlanId: null,
     conflicts: [],
+    clarification: null,
+    clarificationInput: {},
     confirmLoading: false,
     setUserInput: (value) =>
       set((state) => {
@@ -56,6 +63,8 @@ export const useAgentStore = create<AgentState>()(
         state.planOptions = [];
         state.selectedPlanId = null;
         state.conflicts = [];
+        state.clarification = null;
+        state.clarificationInput = {};
         state.confirmLoading = false;
         state.revisionInput = '';
       }),
@@ -68,6 +77,8 @@ export const useAgentStore = create<AgentState>()(
         state.planOptions = [];
         state.selectedPlanId = null;
         state.conflicts = [];
+        state.clarification = null;
+        state.clarificationInput = {};
       }),
     updateStep: (stepId, status, output) =>
       set((state) => {
@@ -85,6 +96,8 @@ export const useAgentStore = create<AgentState>()(
         state.selectedPlanId = null;
         state.conflicts = conflicts;
         state.runStatus = 'waitingConfirm';
+        state.clarification = null;
+        state.clarificationInput = {};
       }),
     setPlanOptions: (plans, conflicts) =>
       set((state) => {
@@ -93,6 +106,25 @@ export const useAgentStore = create<AgentState>()(
         state.selectedPlanId = null;
         state.conflicts = conflicts;
         state.runStatus = 'waitingConfirm';
+        state.clarification = null;
+        state.clarificationInput = {};
+      }),
+    setClarification: (clarification) =>
+      set((state) => {
+        state.clarification = clarification;
+        state.clarificationInput = clarification
+          ? Object.fromEntries(Object.entries(clarification.clarificationJson).map(([field, value]) => [field, typeof value === 'string' ? value : '']))
+          : {};
+        state.runStatus = clarification ? 'needsUserInput' : state.runStatus;
+      }),
+    setClarificationInput: (field, value) =>
+      set((state) => {
+        state.clarificationInput[field] = value;
+      }),
+    clearClarification: () =>
+      set((state) => {
+        state.clarification = null;
+        state.clarificationInput = {};
       }),
     selectPlan: (planId) =>
       set((state) => {

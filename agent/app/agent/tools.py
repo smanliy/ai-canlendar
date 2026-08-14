@@ -1,0 +1,477 @@
+import html
+import json
+import os
+import re
+import ast
+import operator
+import urllib.parse
+import urllib.request
+from html.parser import HTMLParser
+from pathlib import Path
+from socket import timeout as SocketTimeout
+from typing import Any
+from urllib.error import HTTPError, URLError
+
+
+class _DuckDuckGoResultParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[dict[str, str]] = []
+        self._active_href = ""
+        self._active_text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        attr_map = {key: value or "" for key, value in attrs}
+        class_name = attr_map.get("class", "")
+        href = attr_map.get("href", "")
+        if "result__a" in class_name and href:
+            self._active_href = href
+            self._active_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._active_href:
+            self._active_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or not self._active_href:
+            return
+        title = " ".join("".join(self._active_text).split())
+        if title:
+            self.results.append(
+                {
+                    "title": html.unescape(title),
+                    "url": self._normalize_duck_url(self._active_href),
+                    "snippet": "",
+                }
+            )
+        self._active_href = ""
+        self._active_text = []
+
+    @staticmethod
+    def _normalize_duck_url(value: str) -> str:
+        parsed = urllib.parse.urlparse(value)
+        query = urllib.parse.parse_qs(parsed.query)
+        uddg = query.get("uddg", [""])[0]
+        return urllib.parse.unquote(uddg) if uddg else value
+
+
+def _http_get(url: str, timeout: int = 8) -> str:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; ChronoAgent/1.0; +https://localhost)",
+            "Accept": "text/html,application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        return response.read().decode(charset, errors="replace")
+
+
+def _format_network_error(prefix: str, error: Exception) -> str:
+    if isinstance(error, TimeoutError | SocketTimeout):
+        return f"{prefix}: <urlopen error timed out>"
+    if isinstance(error, HTTPError):
+        return f"{prefix}: HTTP {error.code}"
+    if isinstance(error, URLError):
+        return f"{prefix}: {error}"
+    return f"{prefix}: {error}"
+
+
+def _load_env_file_value(env_file: Path, name: str) -> str:
+    if not env_file.exists():
+        return ""
+    try:
+        lines = env_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.strip() == name:
+            return value.strip().strip('"').strip("'")
+    return ""
+
+
+def _get_env_value(*names: str) -> str:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+
+    current = Path(__file__).resolve()
+    candidate_files: list[Path] = []
+    for parent in current.parents:
+        candidate_files.extend(
+            [
+                parent / ".env",
+                parent / "agent" / ".env",
+                parent / "node_calendar-bff" / ".env",
+            ]
+        )
+
+    seen: set[Path] = set()
+    for env_file in candidate_files:
+        if env_file in seen:
+            continue
+        seen.add(env_file)
+        for name in names:
+            value = _load_env_file_value(env_file, name)
+            if value:
+                return value
+    return ""
+
+
+def _tavily_search(query: str, limit: int) -> list[dict[str, str]]:
+    api_key = _get_env_value("TAVILY_API_KEY")
+    if not api_key:
+        return []
+
+    request = urllib.request.Request(
+        "https://api.tavily.com/search",
+        method="POST",
+        headers={"Content-Type": "application/json"},
+        data=json.dumps(
+            {
+                "api_key": api_key,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": limit,
+                "include_answer": False,
+            }
+        ).encode("utf-8"),
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    results = payload.get("results") if isinstance(payload, dict) else []
+    if not isinstance(results, list):
+        return []
+    return [
+        {
+            "title": str(item.get("title", "")),
+            "url": str(item.get("url", "")),
+            "snippet": str(item.get("content", ""))[:500],
+        }
+        for item in results[:limit]
+        if isinstance(item, dict)
+    ]
+
+
+def _cstcloud_search(query: str, limit: int) -> list[dict[str, str]]:
+    api_key = _get_env_value("CSTCLOUD_API_KEY", "UNI_API_KEY")
+    if not api_key:
+        return []
+
+    base_url = (_get_env_value("CSTCLOUD_BASE_URL") or "https://uni-api.cstcloud.cn/v1").rstrip("/")
+    request = urllib.request.Request(
+        f"{base_url}/web-search",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps(
+            {
+                "model": "web-search",
+                "query": query,
+                "freshness": "noLimit",
+                "summary": False,
+                "count": limit,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    if payload.get("code") not in (None, 200):
+        raise RuntimeError(f"HTTP body code {payload.get('code')}: {payload.get('msg')}")
+
+    values = (
+        payload.get("data", {})
+        .get("webPages", {})
+        .get("value", [])
+        if isinstance(payload, dict)
+        else []
+    )
+    if not isinstance(values, list):
+        return []
+
+    return [
+        {
+            "title": str(item.get("name", "")),
+            "url": str(item.get("url", "")),
+            "snippet": str(item.get("snippet", "") or item.get("summary", ""))[:500],
+        }
+        for item in values[:limit]
+        if isinstance(item, dict)
+    ]
+
+
+def _duckduckgo_search(query: str, limit: int) -> list[dict[str, str]]:
+    encoded = urllib.parse.urlencode({"q": query})
+    body = _http_get(f"https://html.duckduckgo.com/html/?{encoded}")
+    parser = _DuckDuckGoResultParser()
+    parser.feed(body)
+    return parser.results[:limit]
+
+
+def web_search_tool(query: str, limit: int = 5) -> dict[str, Any]:
+    print(f"[Python Agent Tool] web_search query={query}", flush=True)
+    errors: list[str] = []
+    fallbacks: list[dict[str, str]] = []
+    results: list[dict[str, str]] = []
+    provider = ""
+
+    if _get_env_value("CSTCLOUD_API_KEY", "UNI_API_KEY"):
+        try:
+            results = _cstcloud_search(query, limit)
+            if results:
+                provider = "cstcloud"
+                fallbacks.append({"provider": "cstcloud", "status": "ok"})
+            else:
+                fallbacks.append({"provider": "cstcloud", "status": "empty"})
+        except Exception as error:  # noqa: BLE001 - tool errors are reported to agent caller
+            message = _format_network_error("cstcloud", error)
+            errors.append(message)
+            fallbacks.append({"provider": "cstcloud", "status": "failed", "reason": message})
+    else:
+        fallbacks.append({"provider": "cstcloud", "status": "skipped", "reason": "missing api key"})
+
+    try:
+        if not results:
+            results = _tavily_search(query, limit)
+            if results:
+                provider = "tavily"
+                fallbacks.append({"provider": "tavily", "status": "ok"})
+            else:
+                fallbacks.append({"provider": "tavily", "status": "empty"})
+    except Exception as error:  # noqa: BLE001 - tool errors are reported to agent caller
+        message = _format_network_error("tavily", error)
+        errors.append(message)
+        fallbacks.append({"provider": "tavily", "status": "failed", "reason": message})
+
+    if not results:
+        try:
+            results = _duckduckgo_search(query, limit)
+            if results:
+                provider = "duckduckgo"
+                fallbacks.append({"provider": "duckduckgo", "status": "ok"})
+            else:
+                fallbacks.append({"provider": "duckduckgo", "status": "empty"})
+        except Exception as error:  # noqa: BLE001
+            message = _format_network_error("duckduckgo", error)
+            errors.append(message)
+            fallbacks.append({"provider": "duckduckgo", "status": "failed", "reason": message})
+
+    payload = {
+        "tool": "web_search",
+        "query": query,
+        "provider": provider,
+        "fallbacks": fallbacks,
+        "results": results,
+        "errors": errors,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+    return payload
+
+
+def web_search(q: str, count: int = 5) -> dict[str, Any]:
+    results = web_search_tool(q, count)
+    return {
+        "tool": "web_search",
+        "args": {"q": q, "count": count},
+        "provider": results.get("provider", ""),
+        "fallbacks": results.get("fallbacks", []),
+        "results": results.get("results", []),
+        "errors": results.get("errors", []),
+    }
+
+
+class _TextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript"} and self._skip_depth > 0:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            text = " ".join(data.split())
+            if text:
+                self.parts.append(text)
+
+    def text(self) -> str:
+        return "\n".join(self.parts)
+
+
+def page_fetch(url: str) -> dict[str, Any]:
+    print(f"[Python Agent Tool] page_fetch url={url}", flush=True)
+    errors: list[str] = []
+    text = ""
+    try:
+        body = _http_get(url, timeout=10)
+        parser = _TextExtractor()
+        parser.feed(body)
+        text = parser.text()[:12000]
+    except Exception as error:  # noqa: BLE001
+        errors.append(_format_network_error("page_fetch", error))
+
+    payload = {
+        "tool": "page_fetch",
+        "args": {"url": url},
+        "text": text,
+        "errors": errors,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+    return payload
+
+
+_CALCULATE_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _eval_math_node(node: ast.AST) -> float:
+    if isinstance(node, ast.Expression):
+        return _eval_math_node(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, int | float):
+        return float(node.value)
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _CALCULATE_OPERATORS:
+        return float(_CALCULATE_OPERATORS[type(node.op)](_eval_math_node(node.operand)))
+    if isinstance(node, ast.BinOp) and type(node.op) in _CALCULATE_OPERATORS:
+        return float(_CALCULATE_OPERATORS[type(node.op)](_eval_math_node(node.left), _eval_math_node(node.right)))
+    raise ValueError("unsupported expression")
+
+
+def calculate(expr: str) -> dict[str, Any]:
+    print(f"[Python Agent Tool] calculate expr={expr}", flush=True)
+    errors: list[str] = []
+    result: float | int | None = None
+    try:
+        tree = ast.parse(expr, mode="eval")
+        value = _eval_math_node(tree)
+        result = int(value) if value.is_integer() else value
+    except Exception as error:  # noqa: BLE001
+        errors.append(f"calculate: {error}")
+
+    payload = {
+        "tool": "calculate",
+        "args": {"expr": expr},
+        "result": result,
+        "errors": errors,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+    return payload
+
+
+TOOL_REGISTRY = {
+    "web_search": {
+        "description": "搜索外部网页。参数：q 搜索关键词，count 结果数量。",
+        "parameters": {"q": "string", "count": "number"},
+        "handler": web_search,
+    },
+    "page_fetch": {
+        "description": "抓取目标网页全文文本。参数：url 目标网页地址。",
+        "parameters": {"url": "string"},
+        "handler": page_fetch,
+    },
+    "calculate": {
+        "description": "本地四则运算。参数：expr 数学表达式。",
+        "parameters": {"expr": "string"},
+        "handler": calculate,
+    },
+}
+
+
+def get_tool_specs() -> list[dict[str, Any]]:
+    return [
+        {
+            "tool": name,
+            "description": spec["description"],
+            "parameters": spec["parameters"],
+        }
+        for name, spec in TOOL_REGISTRY.items()
+    ]
+
+
+def dispatch_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
+    tool_name = str(tool_call.get("tool", "")).strip()
+    args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
+
+    if tool_name not in TOOL_REGISTRY:
+        return {
+            "tool": tool_name,
+            "results": [],
+            "errors": [f"unknown tool: {tool_name}"],
+        }
+
+    if tool_name == "web_search":
+        q = str(args.get("q") or tool_call.get("q") or "").strip()
+        count_raw = args.get("count") or tool_call.get("count") or 5
+        try:
+            count = max(1, min(10, int(count_raw)))
+        except (TypeError, ValueError):
+            count = 5
+        if not q:
+            return {"tool": tool_name, "results": [], "errors": ["web_search: missing q"]}
+        return web_search(q, count)
+
+    if tool_name == "page_fetch":
+        url = str(args.get("url") or tool_call.get("url") or "").strip()
+        if not url:
+            return {"tool": tool_name, "text": "", "errors": ["page_fetch: missing url"]}
+        return page_fetch(url)
+
+    if tool_name == "calculate":
+        expr = str(args.get("expr") or tool_call.get("expr") or "").strip()
+        if not expr:
+            return {"tool": tool_name, "result": None, "errors": ["calculate: missing expr"]}
+        return calculate(expr)
+
+    return {
+        "tool": tool_name,
+        "results": [],
+        "errors": [f"unhandled tool: {tool_name}"],
+    }
+
+
+def build_research_queries(raw_input: str, normalized_context: dict[str, Any]) -> list[str]:
+    text = raw_input.strip()
+    duration = str(normalized_context.get("duration", "")).strip()
+    base = re.sub(r"\s+", " ", text)
+    queries = [
+        f"{base} 学习步骤 耗时 经验",
+        f"{base} 任务拆解 学习路径 耗时",
+    ]
+    if "牛客" in base:
+        queries.append("牛客 前端 刷题 复盘 耗时 经验")
+    if "前端" in base:
+        queries.append("前端 学习 视频 刷题 项目 复盘 耗时")
+    if duration:
+        queries.append(f"{base} {duration} 如何安排 学习计划")
+    return list(dict.fromkeys(queries))[:4]
+
+
+def research_task_duration(raw_input: str, normalized_context: dict[str, Any]) -> list[dict[str, Any]]:
+    return [web_search_tool(query, limit=4) for query in build_research_queries(raw_input, normalized_context)]

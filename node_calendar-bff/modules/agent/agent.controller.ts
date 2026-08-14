@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 
 import * as agentService from './agent.service';
+import { getAgentHttpStatus } from './agent.errors';
 import { validateCreateAgentRunPayload } from './agent.schema';
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -23,7 +24,7 @@ export async function createRun(req: Request, res: Response): Promise<void> {
       userId: req.user.id,
       input: payload.input
     });
-    const data = await agentService.createScheduleRun(req.user.id, payload.input);
+    const data = await agentService.createScheduleRun(req.user.id, payload.input, payload.clarificationJson);
 
     res.status(201).json({
       code: 0,
@@ -31,8 +32,14 @@ export async function createRun(req: Request, res: Response): Promise<void> {
       data
     });
   } catch (error) {
-    res.status(400).json({
-      code: 400,
+    const statusCode = getAgentHttpStatus(error);
+    console.error('[Node Agent API] POST /api/agent/runs failed:', {
+      statusCode,
+      message: getErrorMessage(error, 'Agent failed'),
+      error
+    });
+    res.status(statusCode).json({
+      code: statusCode,
       message: getErrorMessage(error, 'Agent failed'),
       data: null
     });

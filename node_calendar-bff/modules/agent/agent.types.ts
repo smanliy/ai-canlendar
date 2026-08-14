@@ -5,6 +5,16 @@ export interface ParsedSubtask {
   title: string;
   minutes: number;
   order: number;
+  durationRangeMinutes?: [number, number];
+  dependsOn?: string[];
+  evidence?: Array<{
+    title?: string;
+    url?: string;
+    snippet?: string;
+    tool?: string;
+    query?: string;
+    provider?: string;
+  }>;
   startAt?: string;
   endAt?: string;
 }
@@ -47,6 +57,14 @@ export interface PlanItem {
   durationHours: number;
   category: EventCategory;
   priority: EventPriority;
+  evidence?: Array<{
+    title?: string;
+    url?: string;
+    snippet?: string;
+    tool?: string;
+    query?: string;
+    provider?: string;
+  }>;
 }
 
 export interface SchedulePlan {
@@ -79,3 +97,14 @@ export interface AgentRunResponse {
   plan: SchedulePlanOption;
   conflicts: AgentConflict[];
 }
+
+export interface AgentClarificationResponse {
+  runId: string;
+  status: 'needsUserInput';
+  rawInput: string;
+  message: string;
+  reasons: string[];
+  clarificationJson: Record<string, unknown>;
+}
+
+export type AgentCreateRunResponse = AgentRunResponse | AgentClarificationResponse;

@@ -9,19 +9,27 @@ interface ApiResponse<T> {
   data: T;
 }
 
+export type SchedulePlanResult =
+  | {
+      status: 'needsUserInput';
+      runId: string;
+      rawInput: string;
+      message: string;
+      reasons: string[];
+      clarificationJson: Record<string, unknown>;
+    }
+  | {
+      status: 'waitingConfirm';
+      runId: string;
+      plans: SchedulePlanOption[];
+      plan: SchedulePlan;
+      conflicts: { id: string; message: string }[];
+    };
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 const CSRF_COOKIE_NAME = 'chrono_csrf_token';
 
-const stepNames = [
-  '解析用户输入',
-  '拆解子任务',
-  '查询已有日程',
-  '计算空闲时间',
-  '生成排期方案',
-  '检测冲突',
-  '等待用户确认',
-  '执行写入日历'
-];
+const stepNames = ['解析用户输入', '拆解子任务', '查询已有日程', '计算空闲时间', '生成排期方案', '检测冲突', '等待用户确认', '执行写入日历'];
 
 const now = () => dayjs().toISOString();
 
@@ -57,12 +65,12 @@ async function parseResponse<T>(response: Response): Promise<ApiResponse<T>> {
     try {
       result = JSON.parse(rawText) as ApiResponse<T>;
     } catch {
-      throw new Error(response.ok ? '后端返回格式不是 JSON' : `接口请求失败：HTTP ${response.status}`);
+      throw new Error(response.ok ? '后端返回格式不是 JSON' : `接口请求失败: HTTP ${response.status}`);
     }
   }
 
   if (!result) {
-    throw new Error(response.ok ? '后端返回为空' : `接口请求失败：HTTP ${response.status}`);
+    throw new Error(response.ok ? '后端返回为空' : `接口请求失败: HTTP ${response.status}`);
   }
 
   return result;
@@ -95,7 +103,7 @@ async function request<T>(path: string, options: RequestInit = {}, retried = fal
   }
 
   if (!response.ok || result.code !== 0) {
-    throw new Error(result.message || `接口请求失败：HTTP ${response.status}`);
+    throw new Error(result.message || `接口请求失败: HTTP ${response.status}`);
   }
 
   return result.data;
@@ -113,22 +121,48 @@ export const createInitialSteps = (): AgentRunStep[] =>
   }));
 
 export const agentApi = {
-  async schedulePlan(input: string): Promise<{ runId: string; plans: SchedulePlanOption[]; plan: SchedulePlan; conflicts: { id: string; message: string }[] }> {
+  async schedulePlan(input: string, clarificationJson?: unknown): Promise<SchedulePlanResult> {
     if (!input.trim()) throw new Error('请输入排期目标');
 
     const data = await request<{
+      status: 'needsUserInput' | 'waitingConfirm';
       runId: string;
-      userPreference: AgentUserPreference;
-      plans: SchedulePlanOption[];
-      plan: SchedulePlan;
-      conflicts: { id: string; message: string }[];
+      rawInput?: string;
+      userPreference?: AgentUserPreference;
+      message?: string;
+      reasons?: string[];
+      clarificationJson?: Record<string, unknown>;
+      plans?: SchedulePlanOption[];
+      plan?: SchedulePlan;
+      conflicts?: { id: string; message: string }[];
       pythonAgentAck?: { message: string };
     }>('/agent/runs', {
       method: 'POST',
-      body: JSON.stringify({ input })
+      body: JSON.stringify({ input, clarificationJson })
     });
 
-    return data;
+    if (data.status === 'needsUserInput') {
+      return {
+        status: 'needsUserInput',
+        runId: data.runId,
+        rawInput: data.rawInput ?? input,
+        message: data.message || '信息还不够明确，请补全 JSON 后再次发送。',
+        reasons: data.reasons ?? [],
+        clarificationJson: data.clarificationJson ?? {}
+      };
+    }
+
+    if (!data.plans || !data.plan || !data.conflicts) {
+      throw new Error('后端没有返回排期方案');
+    }
+
+    return {
+      status: 'waitingConfirm',
+      runId: data.runId,
+      plans: data.plans,
+      plan: data.plan,
+      conflicts: data.conflicts
+    };
   },
 
   async confirm(runId: string): Promise<{ status: AgentRunStatus }> {

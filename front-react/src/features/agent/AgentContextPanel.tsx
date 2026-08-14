@@ -51,7 +51,7 @@ function mapToVineEvents(events: CalendarEvent[], currentDate: string): VineEven
     title: event.title,
     startTime: event.startTime,
     endTime: event.endTime,
-    status: event.status === 'done?' ? 'done' : conflictIds.has(event.id) ? 'conflict' : 'normal',
+    status: event.status === '已完成' ? 'done' : conflictIds.has(event.id) ? 'conflict' : 'normal',
     category: event.category,
     priority: event.priority
   }));

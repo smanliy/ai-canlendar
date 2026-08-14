@@ -1,4 +1,4 @@
-import { CheckCircleFilled, CloseCircleFilled, LoadingOutlined, SendOutlined } from '@ant-design/icons';
+import { CheckCircleFilled, CloseCircleFilled, GlobalOutlined, LoadingOutlined, SendOutlined } from '@ant-design/icons';
 import { Alert, Button, Input, Space } from 'antd';
 
 import { useAgentStore } from '../../stores/agentStore';
@@ -26,6 +26,32 @@ const statusIcon = {
   failed: <CloseCircleFilled className="agent-step-failed" />
 };
 
+interface ResearchSource {
+  title?: string;
+  url?: string;
+  snippet?: string;
+  tool?: string;
+  query?: string;
+  provider?: string;
+}
+
+function trimText(value: string | undefined, maxLength: number) {
+  const text = (value ?? '').trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function readResearchSources(output: unknown): ResearchSource[] {
+  if (!output || typeof output !== 'object' || !('researchSources' in output)) return [];
+  const value = (output as { researchSources?: unknown }).researchSources;
+  return Array.isArray(value) ? (value as ResearchSource[]) : [];
+}
+
+function readStepMessage(output: unknown): string {
+  if (!output || typeof output !== 'object' || !('message' in output)) return '';
+  const value = (output as { message?: unknown }).message;
+  return typeof value === 'string' ? value : '';
+}
+
 export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, variant = 'compact' }: AgentChatPanelProps) {
   const userInput = useAgentStore((state) => state.userInput);
   const revisionInput = useAgentStore((state) => state.revisionInput);
@@ -34,11 +60,21 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, vari
   const planOptions = useAgentStore((state) => state.planOptions);
   const selectedPlanId = useAgentStore((state) => state.selectedPlanId);
   const conflicts = useAgentStore((state) => state.conflicts);
+  const clarification = useAgentStore((state) => state.clarification);
+  const clarificationInput = useAgentStore((state) => state.clarificationInput);
   const confirmLoading = useAgentStore((state) => state.confirmLoading);
   const setUserInput = useAgentStore((state) => state.setUserInput);
   const setRevisionInput = useAgentStore((state) => state.setRevisionInput);
+  const setClarificationInput = useAgentStore((state) => state.setClarificationInput);
   const selectPlan = useAgentStore((state) => state.selectPlan);
   const loading = runStatus === 'running';
+  const visibleClarificationReasons = clarification
+    ? clarification.reasons.filter((reason) => {
+        if (reason.includes('duration') && clarificationInput.duration?.trim()) return false;
+        if (reason.includes('deadline') && clarificationInput.deadline?.trim()) return false;
+        return true;
+      })
+    : [];
 
   return (
     <section className={`panel-block agent-chat-panel ${variant === 'primary' ? 'agent-chat-primary' : ''}`}>
@@ -50,7 +86,7 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, vari
       <div className="chat-window">
         <div className="chat-message assistant">
           <strong>ChronoAgent</strong>
-          <p>告诉我你的目标、截止时间、预计耗时和偏好时间。我会先分析上下文，再给你六张可选方案卡。</p>
+          <p>告诉我你的目标、截止时间、花费时间和偏好。我会在拆解子任务时判断信息是否足够。</p>
         </div>
 
         {userInput ? (
@@ -65,11 +101,67 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, vari
             <strong>ChronoAgent</strong>
             <div className="agent-step-list">
               {steps.map((step) => (
-                <button className="agent-step-row" key={step.id} type="button">
-                  {statusIcon[step.status]}
-                  <span>{step.name}</span>
-                  <em>{statusLabel[step.status]}</em>
-                </button>
+                <div className="agent-step-block" key={step.id}>
+                  <button className="agent-step-row" type="button">
+                    {statusIcon[step.status]}
+                    <span>{step.name}</span>
+                    <em>{statusLabel[step.status]}</em>
+                  </button>
+
+                  {step.id === 'step-2' && step.status !== 'pending' && !clarification ? (
+                    <div className="agent-tool-trace-panel">
+                      <p>{readStepMessage(step.output) || (step.status === 'running' ? '正在调用 Python Agent 工具查询外部资料' : '等待工具查询结果')}</p>
+                      {readResearchSources(step.output).length > 0 ? (
+                        <div className="agent-tool-trace-list">
+                          {readResearchSources(step.output).map((source, sourceIndex) => (
+                            <a
+                              className="agent-tool-trace-item"
+                              href={source.url}
+                              key={`${source.url ?? source.title}-${sourceIndex}`}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <GlobalOutlined />
+                              <span>
+                                {source.query ? <em>搜索“{trimText(source.query, 36)}”</em> : null}
+                                <strong>{trimText(source.title || source.url, 48)}</strong>
+                                {source.url ? <small>{trimText(source.url, 58)}</small> : null}
+                                {source.snippet ? <small>{trimText(source.snippet, 86)}</small> : null}
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {step.id === 'step-1' && clarification ? (
+                    <div className="clarification-inline-panel">
+                      <p>{clarification.message}</p>
+                      {visibleClarificationReasons.length > 0 ? (
+                        <ul>
+                          {visibleClarificationReasons.map((reason) => (
+                            <li key={reason}>{reason}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {Object.values(clarificationInput).some((value) => value.trim()) ? <p className="clarification-hint">已填写的字段会在提交后重新校验。</p> : null}
+                      <div className="clarification-field-list">
+                        {Object.keys(clarification.clarificationJson).map((field) => (
+                          <label className="clarification-field-row" key={field}>
+                            <span>{field}</span>
+                            <Input
+                              value={clarificationInput[field] ?? ''}
+                              onChange={(event) => setClarificationInput(field, event.target.value)}
+                              disabled={loading}
+                              placeholder={field === 'duration' ? '例如：30分钟 / 半小时 / 2h' : '例如：下周五上午9点 / 明天晚上'}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </div>
           </div>
@@ -78,8 +170,8 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, vari
         {planOptions.length > 0 ? (
           <div className="chat-message assistant">
             <strong>ChronoAgent</strong>
-            <p>我发给你六张方案卡。默认显示编号牌背；点击后翻到正面查看具体方案和操作按钮，再次点击同一张会翻回编号。</p>
-            {conflicts.length > 0 ? <Alert type="warning" showIcon message={`检测到 ${conflicts.length} 个时间冲突，已推荐替代时段`} /> : null}
+            <p>我生成了多个排期方案，请选择一个确认写入日历。</p>
+            {conflicts.length > 0 ? <Alert type="warning" showIcon message={`检测到 ${conflicts.length} 个时间冲突`} /> : null}
             <PlanOptionDeck
               plans={planOptions}
               selectedPlanId={selectedPlanId}
@@ -109,11 +201,11 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, vari
           value={userInput}
           onChange={(event) => setUserInput(event.target.value)}
           rows={3}
-          placeholder="例如：下周五前完成开题报告，预计 10 小时，每天晚上 7 点后安排"
+          placeholder="例如：下周五前完成开题报告，花费 10 小时，每天晚上 7 点后安排"
           disabled={loading}
         />
         <Button type="primary" icon={<SendOutlined />} loading={loading} onClick={() => void onGenerate()}>
-          {loading ? 'Agent 正在工作...' : '发送'}
+          {loading ? 'Agent 正在工作...' : clarification ? '提交补充信息' : '发送'}
         </Button>
       </div>
     </section>
