@@ -43,6 +43,25 @@ export interface PythonPlanResult {
   toolResults?: unknown;
   calendarEventsToolResult?: unknown;
   freeWindowsToolResult?: unknown;
+  scheduleToolResult?: unknown;
+}
+
+export interface PythonResumePayload {
+  decision: {
+    optionId: string;
+    taskId: string;
+  };
+  planningState: Record<string, unknown>;
+}
+
+export interface PythonResumeResult {
+  status: 'ready' | 'failed' | 'unsupported';
+  message?: string;
+  issues?: string[];
+  atomicTasks: PythonAtomicTask[];
+  scheduleToolResult?: unknown;
+  splitResult?: unknown;
+  toolResults?: unknown;
 }
 
 export interface PythonAgentAck {
@@ -145,6 +164,20 @@ export async function planAtomicTasksWithPython(payload: PythonPlanPayload): Pro
     status: result.status,
     taskCount: result.atomicTasks?.length ?? 0,
     feasibility: result.feasibility
+  });
+  return result;
+}
+
+export async function resumeScheduleWithPython(payload: PythonResumePayload): Promise<PythonResumeResult> {
+  console.log('[Node -> Python] Resuming schedule decision:', {
+    optionId: payload.decision.optionId,
+    taskId: payload.decision.taskId
+  });
+  const result = await postPythonJson<PythonResumeResult>('/agent/resume', payload);
+  console.log('[Node <- Python] Resume schedule result:', {
+    status: result.status,
+    taskCount: result.atomicTasks?.length ?? 0,
+    hasSplitResult: Boolean(result.splitResult)
   });
   return result;
 }

@@ -7,3 +7,7 @@ export async function createScheduleRun(userId: string, input: string, clarifica
     clarificationJson
   });
 }
+
+export async function submitScheduleDecision(userId: string, runId: string, decision: { optionId: string; taskId: string }) {
+  return agentOrchestrator.resumeScheduleDecision(userId, runId, decision);
+}

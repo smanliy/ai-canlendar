@@ -23,3 +23,26 @@ export function validateCreateAgentRunPayload(payload: unknown): CreateAgentRunP
     clarificationJson
   };
 }
+
+export interface AgentDecisionPayload {
+  optionId: string;
+  taskId: string;
+}
+
+export function validateAgentDecisionPayload(payload: unknown): AgentDecisionPayload {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Request body is required');
+  }
+  const optionId = (payload as { optionId?: unknown }).optionId;
+  const taskId = (payload as { taskId?: unknown }).taskId;
+  if (typeof optionId !== 'string' || !optionId.trim()) {
+    throw new Error('optionId is required');
+  }
+  if (typeof taskId !== 'string' || !taskId.trim()) {
+    throw new Error('taskId is required');
+  }
+  return {
+    optionId: optionId.trim(),
+    taskId: taskId.trim()
+  };
+}

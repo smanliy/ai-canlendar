@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 
 import * as agentService from './agent.service';
 import { getAgentHttpStatus } from './agent.errors';
-import { validateCreateAgentRunPayload } from './agent.schema';
+import { validateAgentDecisionPayload, validateCreateAgentRunPayload } from './agent.schema';
 import * as eventService from '../events/events.service';
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -42,6 +42,42 @@ export async function createRun(req: Request, res: Response): Promise<void> {
     res.status(statusCode).json({
       code: statusCode,
       message: getErrorMessage(error, 'Agent failed'),
+      data: null
+    });
+  }
+}
+
+export async function submitDecision(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user?.id) {
+      res.status(401).json({
+        code: 401,
+        message: 'Unauthorized',
+        data: null
+      });
+      return;
+    }
+    const runId = String(req.params.runId || '').trim();
+    if (!runId) {
+      throw new Error('runId is required');
+    }
+    const decision = validateAgentDecisionPayload(req.body);
+    const data = await agentService.submitScheduleDecision(req.user.id, runId, decision);
+    res.status(200).json({
+      code: 0,
+      message: 'ok',
+      data
+    });
+  } catch (error) {
+    const statusCode = getAgentHttpStatus(error);
+    console.error('[Node Agent API] POST /api/agent/runs/:runId/decision failed:', {
+      statusCode,
+      message: getErrorMessage(error, 'Agent decision failed'),
+      error
+    });
+    res.status(statusCode).json({
+      code: statusCode,
+      message: getErrorMessage(error, 'Agent decision failed'),
       data: null
     });
   }

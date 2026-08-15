@@ -120,7 +120,7 @@ function AppRoutes() {
 export function App() {
   return (
     <Providers>
-      <Router>
+      <Router future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
         <AppRoutes />
       </Router>
     </Providers>

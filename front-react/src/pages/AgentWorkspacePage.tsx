@@ -14,7 +14,7 @@ interface AgentWorkspacePageProps {
 
 export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePageProps) {
   const { events, fetchEvents, createEvent, updateEvent, deleteEvent } = useCalendarEvents();
-  const { generatePlan, confirmPlan, revisePlan, resetRun } = useAgentRun(fetchEvents);
+  const { generatePlan, confirmPlan, revisePlan, submitScheduleDecision, resetRun } = useAgentRun(fetchEvents);
 
   const handleToggleDone = async (event: CalendarEvent, checked: boolean) => {
     await updateEvent(event.id, { status: checked ? '已完成' : '未开始' });
@@ -34,7 +34,7 @@ export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePag
     >
       <main className="agent-workspace-main">
         <div className="agent-chat-column">
-          <AgentChatPanel variant="primary" onGenerate={generatePlan} onConfirm={confirmPlan} onRevise={revisePlan} onReject={resetRun} />
+          <AgentChatPanel variant="primary" onGenerate={generatePlan} onConfirm={confirmPlan} onRevise={revisePlan} onReject={resetRun} onScheduleDecision={submitScheduleDecision} />
         </div>
         <AgentContextPanel events={events} onToggleDone={handleToggleDone} onOpenCalendar={() => onNavigate('calendar')} />
       </main>

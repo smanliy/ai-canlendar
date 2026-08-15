@@ -84,6 +84,50 @@ export interface FreeWindowsToolResult {
   errors?: string[];
 }
 
+export interface ScheduleInterruptOption {
+  id: 'split_task' | 'allow_beyond_golden_time' | 'adjust_preference';
+  title: string;
+  description: string;
+}
+
+export interface SplitResult {
+  parentTaskTitle?: string;
+  subtaskTitles?: string[];
+  subtasks?: unknown[];
+}
+
+export interface ScheduleInterrupt {
+  type: string;
+  taskId: string;
+  taskTitle: string;
+  taskMinutes: number;
+  maxGoldenWindowMinutes: number;
+  totalGoldenMinutes: number;
+  reason: string;
+  options: ScheduleInterruptOption[];
+}
+
+export interface DraftAllocation {
+  taskId?: string;
+  title?: string;
+  order?: number;
+  plannedMinutes?: number;
+  startIso?: string;
+  endIso?: string;
+  windowType?: 'golden' | 'flexible';
+  isGoldenTime?: boolean;
+  policyFlags?: Record<string, unknown>;
+}
+
+export interface ScheduleToolResult {
+  tool?: string;
+  status?: 'ready' | 'needsDecision' | 'failed' | 'pending';
+  draftAllocations?: DraftAllocation[];
+  remainingFreeWindows?: FreeWindow[];
+  interrupt?: ScheduleInterrupt | null;
+  errors?: string[];
+}
+
 export interface PlanItem {
   id: string;
   title: string;

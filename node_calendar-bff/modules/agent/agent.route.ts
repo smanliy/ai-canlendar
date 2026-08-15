@@ -9,3 +9,4 @@ agentRoutes.post('/internal/calendar-events', agentController.queryCalendarEvent
 
 agentRoutes.use(requireAuth);
 agentRoutes.post('/runs', agentController.createRun);
+agentRoutes.post('/runs/:runId/decision', agentController.submitDecision);

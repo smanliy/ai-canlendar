@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 
 import { useAuthStore } from '../stores/authStore';
-import type { AgentRunDetail, AgentRunStep, AgentRunStatus, AgentUserPreference, CalendarEventsToolResult, FreeWindowsToolResult, SchedulePlan, SchedulePlanOption } from '../types/agent';
+import type { AgentRunDetail, AgentRunStep, AgentRunStatus, AgentUserPreference, CalendarEventsToolResult, FreeWindowsToolResult, SchedulePlan, SchedulePlanOption, ScheduleToolResult, SplitResult } from '../types/agent';
 
 interface ApiResponse<T> {
   code: number;
@@ -26,6 +26,7 @@ export type SchedulePlanResult =
       conflicts: { id: string; message: string }[];
       calendarEventsToolResult?: CalendarEventsToolResult;
       freeWindowsToolResult?: FreeWindowsToolResult;
+      scheduleToolResult?: ScheduleToolResult;
     };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
@@ -140,6 +141,7 @@ export const agentApi = {
       pythonAgentAck?: { message: string };
       calendarEventsToolResult?: CalendarEventsToolResult;
       freeWindowsToolResult?: FreeWindowsToolResult;
+      scheduleToolResult?: ScheduleToolResult;
     }>('/agent/runs', {
       method: 'POST',
       body: JSON.stringify({ input, clarificationJson })
@@ -167,13 +169,30 @@ export const agentApi = {
       plan: data.plan,
       conflicts: data.conflicts,
       calendarEventsToolResult: data.calendarEventsToolResult,
-      freeWindowsToolResult: data.freeWindowsToolResult
+      freeWindowsToolResult: data.freeWindowsToolResult,
+      scheduleToolResult: data.scheduleToolResult
     };
   },
 
   async confirm(runId: string): Promise<{ status: AgentRunStatus }> {
     if (!runId) throw new Error('缺少 RunId');
     return { status: 'success' };
+  },
+
+  async submitDecision(runId: string, decision: { optionId: string; taskId: string }): Promise<{
+    status: 'waitingConfirm';
+    runId: string;
+    plans: SchedulePlanOption[];
+    plan: SchedulePlan;
+    conflicts: { id: string; message: string }[];
+    scheduleToolResult?: ScheduleToolResult;
+    splitResult?: SplitResult;
+  }> {
+    if (!runId) throw new Error('缺少 RunId');
+    return request(`/agent/runs/${encodeURIComponent(runId)}/decision`, {
+      method: 'POST',
+      body: JSON.stringify(decision)
+    });
   },
 
   async revise(runId: string): Promise<{ status: AgentRunStatus }> {

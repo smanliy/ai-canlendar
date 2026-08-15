@@ -1,8 +1,9 @@
 import { prisma } from '../db/prisma';
 import { parseTaskWithDeepSeek } from './deepseek';
 import { extractAgentFieldsWithDeepSeek, type AgentFieldExtraction } from './field-extractor';
-import { planAtomicTasksWithPython, sendTaskToPythonAgent, validateAgentFieldsWithPython, type PythonPlanResult } from './python-agent';
-import type { AgentCreateRunResponse, AgentUserPreference, ParsedScheduleTask, ParsedSubtask, PlanItem, SchedulePlanOption } from './agent.types';
+import { planAtomicTasksWithPython, resumeScheduleWithPython, sendTaskToPythonAgent, validateAgentFieldsWithPython, type PythonPlanResult } from './python-agent';
+import type { AgentCreateRunResponse, AgentDecisionResponse, AgentUserPreference, ParsedScheduleTask, ParsedSubtask, PlanItem, SchedulePlanOption } from './agent.types';
+import { findPlanningSession, savePlanningSession, updatePlanningSessionAtomicPlan } from './agent-planning-session.repository';
 
 interface RunScheduleAgentInput {
   userId: string;
@@ -369,8 +370,17 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
   });
   const plans = buildPlans(parsedTask, preference);
 
+  const runId = `run-${Date.now()}`;
+  await savePlanningSession(runId, {
+    userId,
+    rawInput: input,
+    userPreference: preference,
+    normalizedContext,
+    atomicPlan
+  });
+
   return {
-    runId: `run-${Date.now()}`,
+    runId,
     status: 'waitingConfirm',
     rawInput: enrichedInput,
     userPreference: preference,
@@ -380,6 +390,59 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
     plan: plans[0],
     conflicts: [],
     calendarEventsToolResult: atomicPlan.calendarEventsToolResult,
-    freeWindowsToolResult: atomicPlan.freeWindowsToolResult
+    freeWindowsToolResult: atomicPlan.freeWindowsToolResult,
+    scheduleToolResult: atomicPlan.scheduleToolResult
+  };
+}
+
+export async function resumeScheduleDecision(
+  userId: string,
+  runId: string,
+  decision: { optionId: string; taskId: string }
+): Promise<AgentDecisionResponse> {
+  const session = await findPlanningSession(runId, userId);
+  if (!session || session.userId !== userId) {
+    throw new Error('找不到当前 Agent 规划会话，可能服务重启或会话已过期，请重新生成方案');
+    throw new Error('找不到当前 Agent 规划会话，请重新生成方案');
+  }
+
+  const resumeResult = await resumeScheduleWithPython({
+    decision,
+    planningState: {
+      rawInput: session.rawInput,
+      normalizedContext: session.normalizedContext,
+      userPreference: session.userPreference,
+      atomicTasks: session.atomicPlan.atomicTasks,
+      toolResults: session.atomicPlan.toolResults,
+      calendarEventsToolResult: session.atomicPlan.calendarEventsToolResult,
+      freeWindowsToolResult: session.atomicPlan.freeWindowsToolResult,
+      scheduleToolResult: session.atomicPlan.scheduleToolResult
+    }
+  });
+
+  if (resumeResult.status !== 'ready') {
+    throw new Error(resumeResult.message || resumeResult.issues?.join('；') || 'Agent 决策恢复失败');
+    throw new Error(resumeResult.message || resumeResult.issues?.join('；') || 'Agent 决策恢复失败');
+  }
+
+  const nextAtomicPlan: PythonPlanResult = {
+    ...session.atomicPlan,
+    atomicTasks: resumeResult.atomicTasks,
+    totalEstimatedMinutes: resumeResult.atomicTasks.reduce((sum, task) => sum + Math.max(0, Math.round(Number(task.plannedMinutes || 0))), 0),
+    toolResults: resumeResult.toolResults ?? session.atomicPlan.toolResults,
+    scheduleToolResult: resumeResult.scheduleToolResult
+  };
+  await updatePlanningSessionAtomicPlan(runId, userId, nextAtomicPlan);
+
+  const parsedTask = ensureScheduleShape(buildParsedTaskFromAtomicPlan(session.rawInput, session.normalizedContext, session.userPreference, nextAtomicPlan), session.userPreference);
+  const plans = buildPlans(parsedTask, session.userPreference);
+  return {
+    runId,
+    status: 'waitingConfirm',
+    plans,
+    plan: plans[0],
+    conflicts: [],
+    scheduleToolResult: resumeResult.scheduleToolResult,
+    splitResult: resumeResult.splitResult
   };
 }

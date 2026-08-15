@@ -788,6 +788,139 @@ button {
   word-break: break-word;
 }
 
+.agent-schedule-status-box {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 0.65rem;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.78);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.22);
+  color: #bfdbfe;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  padding: 0.45rem 0.6rem;
+}
+
+.agent-split-summary {
+  margin-top: 0.45rem;
+  color: #93a4bb;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.agent-split-detail-list {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+  border: 1px solid rgba(96, 165, 250, 0.18);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.58);
+  padding: 0.6rem;
+}
+
+.agent-split-detail-item {
+  color: #cbd5e1;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.agent-split-detail-item.parent {
+  color: #dbeafe;
+  font-weight: 700;
+}
+
+.agent-split-detail-item.child {
+  color: #9fb0c7;
+  padding-left: 0.45rem;
+}
+
+.agent-draft-allocation-list {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.65rem;
+}
+
+.agent-draft-allocation-item {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 10px 22px rgba(2, 6, 23, 0.18);
+  color: #dbeafe;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 0.55rem 0.65rem;
+  word-break: break-word;
+}
+
+.agent-decision-panel {
+  margin-top: 0.75rem;
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 0.94));
+  box-shadow: 0 18px 42px rgba(2, 6, 23, 0.36);
+  padding: 0.8rem;
+}
+
+.agent-decision-copy {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.agent-decision-copy strong {
+  color: #eff6ff;
+  font-size: 0.88rem;
+}
+
+.agent-decision-copy span {
+  color: #bfdbfe;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.agent-decision-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.agent-decision-card {
+  min-height: 116px;
+  border: 1px solid rgba(125, 211, 252, 0.45);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(56, 189, 248, 0.18), transparent 38%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(8, 13, 28, 0.98));
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.12), 0 12px 28px rgba(2, 6, 23, 0.42);
+  color: #dbeafe;
+  cursor: pointer;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  text-align: left;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.agent-decision-card:hover {
+  border-color: rgba(147, 197, 253, 0.86);
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.32), 0 18px 36px rgba(37, 99, 235, 0.22);
+  transform: translateY(-1px);
+}
+
+.agent-decision-card strong {
+  color: #f8fafc;
+  font-size: 0.84rem;
+}
+
+.agent-decision-card span {
+  color: #a7b4c8;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
 .chat-plan-actions {
   display: grid;
   width: 100%;

@@ -29,7 +29,7 @@ export function CalendarWorkspacePage({ activePage, onNavigate }: CalendarWorksp
   const openCreateModal = useCalendarStore((state) => state.openCreateModal);
 
   const { events, loading, error, fetchEvents, createEvent, updateEvent, deleteEvent } = useCalendarEvents();
-  const { generatePlan, confirmPlan, revisePlan, resetRun } = useAgentRun(fetchEvents);
+  const { generatePlan, confirmPlan, revisePlan, submitScheduleDecision, resetRun } = useAgentRun(fetchEvents);
 
   useEffect(() => {
     const api = calendarRef.current?.getApi();
@@ -82,7 +82,7 @@ export function CalendarWorkspacePage({ activePage, onNavigate }: CalendarWorksp
         </div>
         <aside className="right-panel">
           <TodayAgenda events={events} onToggleDone={handleToggleDone} />
-          <AgentChatPanel onGenerate={generatePlan} onConfirm={confirmPlan} onRevise={revisePlan} onReject={resetRun} />
+          <AgentChatPanel onGenerate={generatePlan} onConfirm={confirmPlan} onRevise={revisePlan} onReject={resetRun} onScheduleDecision={submitScheduleDecision} />
         </aside>
       </main>
       <EventModal events={events} onCreate={createEvent} onUpdate={updateEvent} onDelete={deleteEvent} />

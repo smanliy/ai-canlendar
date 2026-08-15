@@ -21,6 +21,7 @@ interface AgentState {
   setRevisionInput: (value: string) => void;
   resetRun: () => void;
   startRun: (runId: string) => void;
+  setCurrentRunId: (runId: string) => void;
   updateStep: (stepId: string, status: AgentRunStep['status'], output?: unknown) => void;
   setPlan: (plan: SchedulePlan, conflicts: AgentConflict[]) => void;
   setPlanOptions: (plans: SchedulePlanOption[], conflicts: AgentConflict[]) => void;
@@ -79,6 +80,10 @@ export const useAgentStore = create<AgentState>()(
         state.conflicts = [];
         state.clarification = null;
         state.clarificationInput = {};
+      }),
+    setCurrentRunId: (runId) =>
+      set((state) => {
+        state.currentRunId = runId;
       }),
     updateStep: (stepId, status, output) =>
       set((state) => {

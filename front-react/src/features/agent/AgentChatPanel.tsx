@@ -10,6 +10,7 @@ interface AgentChatPanelProps {
   onConfirm: () => Promise<void>;
   onRevise: () => Promise<void>;
   onReject: () => void;
+  onScheduleDecision: (decision: { optionId: string; taskId: string }) => Promise<void>;
   variant?: 'compact' | 'primary';
 }
 
@@ -98,7 +99,131 @@ function readFreeWindowsJson(output: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
-export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, variant = 'compact' }: AgentChatPanelProps) {
+function readScheduleResult(output: unknown) {
+  if (!output || typeof output !== 'object' || !('scheduleToolResult' in output)) return null;
+  const value = (output as { scheduleToolResult?: unknown }).scheduleToolResult;
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function readScheduleInterrupt(output: unknown) {
+  const value = readScheduleResult(output);
+  const interrupt = value?.interrupt;
+  if (!interrupt || typeof interrupt !== 'object') return null;
+  const options = (interrupt as { options?: unknown }).options;
+  return {
+    reason: typeof (interrupt as { reason?: unknown }).reason === 'string' ? (interrupt as { reason: string }).reason : '',
+    taskId: typeof (interrupt as { taskId?: unknown }).taskId === 'string' ? (interrupt as { taskId: string }).taskId : '',
+    taskTitle: typeof (interrupt as { taskTitle?: unknown }).taskTitle === 'string' ? (interrupt as { taskTitle: string }).taskTitle : '',
+    options: Array.isArray(options) ? (options as Array<{ id?: string; title?: string; description?: string }>) : []
+  };
+}
+
+function readScheduleErrors(output: unknown) {
+  const value = readScheduleResult(output);
+  const errors = value?.errors;
+  return Array.isArray(errors) ? errors.map(String).filter(Boolean) : [];
+}
+
+function readSplitSummary(output: unknown) {
+  if (!output || typeof output !== 'object' || !('splitResult' in output)) return '';
+  const value = (output as { splitResult?: unknown }).splitResult;
+  if (!value || typeof value !== 'object') return '';
+  const parent = typeof (value as { parentTaskTitle?: unknown }).parentTaskTitle === 'string' ? (value as { parentTaskTitle: string }).parentTaskTitle : '';
+  const titles = Array.isArray((value as { subtaskTitles?: unknown }).subtaskTitles) ? ((value as { subtaskTitles: unknown[] }).subtaskTitles).map(String).filter(Boolean) : [];
+  if (!parent || titles.length === 0) return '';
+  const rounds = typeof (value as { autoSplitRounds?: unknown }).autoSplitRounds === 'number' ? (value as { autoSplitRounds: number }).autoSplitRounds : 1;
+  return `检测到有任务无法放入当前黄金时间，已自动拆分 ${rounds} 个任务，并重新生成排期草稿。`;
+}
+
+function readSplitDetailLines(output: unknown) {
+  if (!output || typeof output !== 'object' || !('splitResult' in output)) return [];
+  const value = (output as { splitResult?: unknown }).splitResult;
+  if (!value || typeof value !== 'object') return [];
+  const batches = Array.isArray((value as { splitBatches?: unknown }).splitBatches) ? (value as { splitBatches: unknown[] }).splitBatches : [value];
+  const lines: string[] = [];
+  for (const batch of batches) {
+    if (!batch || typeof batch !== 'object') continue;
+    const record = batch as Record<string, unknown>;
+    const parent = typeof record.parentTaskTitle === 'string' ? record.parentTaskTitle : '';
+    const subtasks = Array.isArray(record.subtasks) ? record.subtasks : [];
+    if (!parent || subtasks.length === 0) continue;
+    lines.push(`「${parent}」已拆分为：`);
+    for (const task of subtasks) {
+      if (!task || typeof task !== 'object') continue;
+      const taskRecord = task as Record<string, unknown>;
+      const title = typeof taskRecord.title === 'string' ? taskRecord.title : '';
+      const minutes = typeof taskRecord.plannedMinutes === 'number' ? taskRecord.plannedMinutes : Number(taskRecord.plannedMinutes || 0);
+      if (!title) continue;
+      lines.push(`- ${title}${Number.isFinite(minutes) && minutes > 0 ? `（${Math.round(minutes)}分钟）` : ''}`);
+    }
+  }
+  return lines.slice(0, 18);
+}
+
+function formatScheduleDateTime(value: unknown) {
+  if (typeof value !== 'string' || !value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+    .format(date)
+    .replace(/\//g, '-');
+}
+
+function readDraftAllocationLines(output: unknown) {
+  const value = readScheduleResult(output);
+  const allocations = value?.draftAllocations;
+  if (!Array.isArray(allocations)) return [];
+  return allocations
+    .map((item) => {
+      if (!item || typeof item !== 'object') return '';
+      const record = item as Record<string, unknown>;
+      const title = typeof record.title === 'string' ? record.title : '';
+      const start = formatScheduleDateTime(record.startIso);
+      const end = formatScheduleDateTime(record.endIso);
+      const minutes = typeof record.plannedMinutes === 'number' ? record.plannedMinutes : Number(record.plannedMinutes || 0);
+      if (!title || !start || !end) return '';
+      return `${start} - ${end}｜${title}${Number.isFinite(minutes) && minutes > 0 ? `（${Math.round(minutes)}分钟）` : ''}`;
+    })
+    .filter(Boolean);
+}
+
+function readDraftAllocationSummary(output: unknown) {
+  const lines = readDraftAllocationLines(output);
+  if (lines.length === 0) return [];
+  const visible = lines.slice(0, 4);
+  if (lines.length > visible.length) {
+    visible.push(`还有 ${lines.length - visible.length} 个任务已排入草稿。`);
+  }
+  return visible;
+}
+
+function readScheduleStatus(output: unknown) {
+  const value = readScheduleResult(output);
+  const status = value?.status;
+  if (typeof status !== 'string' || status === 'pending') return '等待 Python 排期工具返回结果';
+  if (status === 'needsDecision') {
+    const interrupt = value?.interrupt;
+    if (interrupt && typeof interrupt === 'object' && (interrupt as { type?: unknown }).type === 'task_needs_non_golden_approval') {
+      return '需要确认是否允许使用非黄金时间';
+    }
+    if (interrupt && typeof interrupt === 'object' && (interrupt as { type?: unknown }).type === 'task_exceeds_available_window') {
+      return '连续空闲时间不足，需要用户选择下一步';
+    }
+    return '黄金时间不足，需要用户选择下一步';
+  }
+  if (status === 'ready') return '排期工具已生成排期草稿，下面展示时间段安排';
+  const errors = readScheduleErrors(output);
+  return errors.length > 0 ? `排期工具处理失败：${errors.join('；')}` : '排期工具处理失败';
+}
+
+export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onScheduleDecision, variant = 'compact' }: AgentChatPanelProps) {
   const userInput = useAgentStore((state) => state.userInput);
   const revisionInput = useAgentStore((state) => state.revisionInput);
   const runStatus = useAgentStore((state) => state.runStatus);
@@ -216,6 +341,65 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, vari
                     <div className="agent-tool-trace-panel">
                       <p>{readStepMessage(step.output) || '已计算空闲时间'}</p>
                       <pre className="agent-json-result-box">{readFreeWindowsJson(step.output) || '{\n  "freeWindows": [],\n  "errors": ["空闲时间结果未返回"]\n}'}</pre>
+                    </div>
+                  ) : null}
+
+                  {step.id === 'step-5' && step.status !== 'pending' ? (
+                    <div className="agent-tool-trace-panel">
+                      <p>{readStepMessage(step.output) || '已生成排期草稿'}</p>
+                      <div className="agent-schedule-status-box">{readScheduleStatus(step.output)}</div>
+                      {readScheduleErrors(step.output).length > 0 ? (
+                        <ul className="agent-calendar-error-list">
+                          {readScheduleErrors(step.output).map((error) => (
+                            <li key={error}>{error}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {readSplitSummary(step.output) ? <div className="agent-split-summary">{readSplitSummary(step.output)}</div> : null}
+                      {readSplitDetailLines(step.output).length > 0 ? (
+                        <div className="agent-split-detail-list">
+                          {readSplitDetailLines(step.output).map((line, lineIndex) => (
+                            <div className={`agent-split-detail-item ${line.startsWith('-') ? 'child' : 'parent'}`} key={`${line}-${lineIndex}`}>
+                              {line}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {readDraftAllocationSummary(step.output).length > 0 ? (
+                        <div className="agent-draft-allocation-list">
+                          {readDraftAllocationSummary(step.output).map((line) => (
+                            <div className="agent-draft-allocation-item" key={line}>
+                              {line}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {readScheduleInterrupt(step.output) ? (
+                        <div className="agent-decision-panel">
+                          <div className="agent-decision-copy">
+                            <strong>{readScheduleInterrupt(step.output)?.taskTitle || '当前子任务需要用户决策'}</strong>
+                            <span>{readScheduleInterrupt(step.output)?.reason}</span>
+                          </div>
+                          <div className="agent-decision-card-grid">
+                            {readScheduleInterrupt(step.output)?.options.map((option) => (
+                              <button
+                                className="agent-decision-card"
+                                key={option.id}
+                                type="button"
+                                onClick={() =>
+                                  void onScheduleDecision({
+                                    optionId: option.id || '',
+                                    taskId: readScheduleInterrupt(step.output)?.taskId || readScheduleInterrupt(step.output)?.taskTitle || ''
+                                  })
+                                }
+                              >
+                                <strong>{option.title}</strong>
+                                <span>{option.description}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 

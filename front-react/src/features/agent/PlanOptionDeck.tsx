@@ -1,6 +1,6 @@
 import { GlobalOutlined } from '@ant-design/icons';
 import { Button, Tag, Typography } from 'antd';
-import { useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties, type KeyboardEvent } from 'react';
 
 import type { SchedulePlanOption } from '../../types/agent';
 import './PlanOptionDeck.css';
@@ -59,8 +59,14 @@ function PlanOptionCard({
     '--card-accent': plan.accent ?? '#0891B2'
   } as CSSProperties;
 
+  const handleCardKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onToggle();
+  };
+
   return (
-    <button className={className} type="button" onClick={onToggle} style={cardStyle}>
+    <div className={className} role="button" tabIndex={0} onClick={onToggle} onKeyDown={handleCardKeyDown} style={cardStyle}>
       <div className="deal-card-inner">
         <div className="deal-card-face deal-card-back">
           <span className="deal-card-number">{index + 1}</span>
@@ -122,7 +128,7 @@ function PlanOptionCard({
           </div>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
