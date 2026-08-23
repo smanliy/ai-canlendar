@@ -306,6 +306,18 @@ function readScheduleStatus(scheduleToolResult: unknown): string {
   return typeof status === 'string' ? status : '';
 }
 
+function readToolStatus(toolResult: unknown): string {
+  if (!toolResult || typeof toolResult !== 'object') return '';
+  const status = (toolResult as { status?: unknown }).status;
+  return typeof status === 'string' ? status : '';
+}
+
+function readToolErrors(toolResult: unknown): string[] {
+  if (!toolResult || typeof toolResult !== 'object') return [];
+  const errors = (toolResult as { errors?: unknown }).errors;
+  return Array.isArray(errors) ? errors.map(String).filter(Boolean) : [];
+}
+
 function isParsedTaskFullyScheduledWithinDeadline(parsedTask: ParsedScheduleTask): boolean {
   const deadline = dateFromMaybeIso(parsedTask.deadline);
   if (!deadline || parsedTask.subtasks.length === 0) return false;
@@ -426,6 +438,15 @@ async function emitEvent(onEvent: AgentMainFlowEventHandler | undefined, event: 
   await onEvent?.(event);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function emitStepStarted(onEvent: AgentMainFlowEventHandler | undefined, stepId: string, message: string): Promise<void> {
+  await emitEvent(onEvent, { type: 'stepStarted', stepId, message });
+  await sleep(320);
+}
+
 function collectResearchSourcesFromToolResults(toolResults: unknown): unknown[] {
   const results = Array.isArray(toolResults) ? toolResults : [];
   return results
@@ -452,7 +473,7 @@ export async function runScheduleAgent({ userId, input, clarificationJson, onEve
   const preference = await getPreference(userId);
   const nowIso = new Date().toISOString();
 
-  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-1', message: '正在解析用户输入并校验必填信息' });
+  await emitStepStarted(onEvent, 'step-1', '正在解析用户输入并校验必填信息');
   const llmExtraction = await convertFieldsWithLlm(input, preference, clarificationJson, nowIso);
 
   const validation = await validateAgentFieldsWithPython({
@@ -473,7 +494,7 @@ export async function runScheduleAgent({ userId, input, clarificationJson, onEve
       clarificationJson: validation.clarificationJson
     };
     await emitEvent(onEvent, {
-      type: 'stepFailed',
+      type: 'stepUpdated',
       stepId: 'step-1',
       output: { message: validation.message, reasons: validation.reasons }
     });
@@ -482,7 +503,7 @@ export async function runScheduleAgent({ userId, input, clarificationJson, onEve
 
   const normalizedContext = validation.normalizedContext;
   await emitEvent(onEvent, { type: 'stepSucceeded', stepId: 'step-1', output: { message: '用户输入已解析' } });
-  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-2', message: '正在拆解子任务并查询外部资料' });
+  await emitStepStarted(onEvent, 'step-2', '正在拆解子任务并查询外部资料');
   const enrichedInput = buildInputWithAgentContext(input, normalizedContext);
   const atomicPlan = await planAtomicTasksWithPython({
     userId,
@@ -511,28 +532,158 @@ export async function runScheduleAgent({ userId, input, clarificationJson, onEve
     stepId: 'step-2',
     output: {
       message: '子任务拆解完成，已查询外部资料来源',
-      researchSources: collectResearchSourcesFromToolResults(atomicPlan.toolResults)
+      researchSources: collectResearchSourcesFromToolResults(atomicPlan.toolResults),
+      researchToolResults: atomicPlan.toolResults
     }
   });
-  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-3', message: '正在查询用户本地日程' });
+  const runId = `run-${Date.now()}`;
+  const parsedTaskFromPython = buildParsedTaskFromAtomicPlan(input, normalizedContext, preference, atomicPlan);
+
+  await emitStepStarted(onEvent, 'step-3', '正在查询用户本地日程');
+  const calendarEventErrors = readToolErrors(atomicPlan.calendarEventsToolResult);
+  if (calendarEventErrors.length > 0) {
+    await emitEvent(onEvent, {
+      type: 'stepFailed',
+      stepId: 'step-3',
+      output: {
+        message: `查询用户本地日程失败：${calendarEventErrors.join('；')}`,
+        calendarEventsResult: atomicPlan.calendarEventsToolResult
+      }
+    });
+    throw new Error(`查询用户本地日程失败：${calendarEventErrors.join('；')}`);
+  }
   await emitEvent(onEvent, {
     type: 'stepSucceeded',
     stepId: 'step-3',
     output: { message: '已查询用户本地日程', calendarEventsResult: atomicPlan.calendarEventsToolResult }
   });
-  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-4', message: '正在计算本地空闲时间' });
+
+  await emitStepStarted(onEvent, 'step-4', '正在计算本地空闲时间');
+  const freeWindowErrors = readToolErrors(atomicPlan.freeWindowsToolResult);
+  if (freeWindowErrors.length > 0) {
+    await emitEvent(onEvent, {
+      type: 'stepFailed',
+      stepId: 'step-4',
+      output: {
+        message: `计算本地空闲时间失败：${freeWindowErrors.join('；')}`,
+        freeWindowsResult: atomicPlan.freeWindowsToolResult
+      }
+    });
+    throw new Error(`计算本地空闲时间失败：${freeWindowErrors.join('；')}`);
+  }
   await emitEvent(onEvent, {
     type: 'stepSucceeded',
     stepId: 'step-4',
     output: { message: '已根据本地日程和用户偏好计算空闲时间', freeWindowsResult: atomicPlan.freeWindowsToolResult }
   });
-  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-5', message: '正在生成排期草稿方案' });
+
+  await emitStepStarted(onEvent, 'step-5', '正在生成排期草稿方案');
+  const scheduleStatus = readScheduleStatus(atomicPlan.scheduleToolResult);
+  const scheduleErrors = readToolErrors(atomicPlan.scheduleToolResult);
+  if (scheduleErrors.length > 0 && scheduleStatus !== 'needsDecision') {
+    await emitEvent(onEvent, {
+      type: 'stepFailed',
+      stepId: 'step-5',
+      output: {
+        message: `排期工具执行失败：${scheduleErrors.join('；')}`,
+        scheduleToolResult: atomicPlan.scheduleToolResult
+      }
+    });
+    throw new Error(`排期工具执行失败：${scheduleErrors.join('；')}`);
+  }
+  if (scheduleStatus === 'needsDecision' || scheduleStatus === 'pending') {
+    await savePlanningSession(runId, {
+      userId,
+      rawInput: input,
+      userPreference: preference,
+      normalizedContext,
+      atomicPlan
+    });
+    await emitEvent(onEvent, {
+      type: 'stepUpdated',
+      stepId: 'step-5',
+      output: {
+        message: scheduleStatus === 'needsDecision' ? '排期工具需要用户决策后才能继续' : '排期工具仍在等待结果',
+        scheduleToolResult: atomicPlan.scheduleToolResult
+      }
+    });
+    return {
+      runId,
+      status: 'waitingConfirm',
+      rawInput: enrichedInput,
+      userPreference: preference,
+      parsedTask: parsedTaskFromPython,
+      plans: [],
+      plan: undefined,
+      conflicts: [],
+      calendarEventsToolResult: atomicPlan.calendarEventsToolResult,
+      freeWindowsToolResult: atomicPlan.freeWindowsToolResult,
+      scheduleToolResult: atomicPlan.scheduleToolResult
+    };
+  }
+  if (scheduleStatus !== 'ready') {
+    await emitEvent(onEvent, {
+      type: 'stepFailed',
+      stepId: 'step-5',
+      output: {
+        message: `排期工具返回了无法继续的状态：${scheduleStatus || 'unknown'}`,
+        scheduleToolResult: atomicPlan.scheduleToolResult
+      }
+    });
+    throw new Error(`排期工具返回了无法继续的状态：${scheduleStatus || 'unknown'}`);
+  }
   await emitEvent(onEvent, {
     type: 'stepSucceeded',
     stepId: 'step-5',
     output: { message: '已调用 Python 排期工具生成草稿方案', scheduleToolResult: atomicPlan.scheduleToolResult }
   });
-  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-6', message: '正在检测时间冲突' });
+
+  await emitStepStarted(onEvent, 'step-6', '正在检测时间冲突');
+  const conflictErrors = readToolErrors(atomicPlan.conflictCheckResult);
+  const conflictStatus = readToolStatus(atomicPlan.conflictCheckResult);
+  if (conflictErrors.length > 0) {
+    await emitEvent(onEvent, {
+      type: 'stepFailed',
+      stepId: 'step-6',
+      output: {
+        message: `冲突检测失败：${conflictErrors.join('；')}`,
+        conflictCheckResult: atomicPlan.conflictCheckResult
+      }
+    });
+    throw new Error(`冲突检测失败：${conflictErrors.join('；')}`);
+  }
+  if (conflictStatus === 'needsDecision' || conflictStatus === 'pending') {
+    const conflicts = buildConflictsFromCheckResult(atomicPlan.conflictCheckResult);
+    await savePlanningSession(runId, {
+      userId,
+      rawInput: input,
+      userPreference: preference,
+      normalizedContext,
+      atomicPlan
+    });
+    await emitEvent(onEvent, {
+      type: 'stepUpdated',
+      stepId: 'step-6',
+      output: {
+        message: conflictStatus === 'needsDecision' ? '检测到未确认冲突，需要处理后才能继续' : '冲突检测仍在等待结果',
+        conflictCheckResult: atomicPlan.conflictCheckResult
+      }
+    });
+    return {
+      runId,
+      status: 'waitingConfirm',
+      rawInput: enrichedInput,
+      userPreference: preference,
+      parsedTask: parsedTaskFromPython,
+      plans: [],
+      plan: undefined,
+      conflicts,
+      calendarEventsToolResult: atomicPlan.calendarEventsToolResult,
+      freeWindowsToolResult: atomicPlan.freeWindowsToolResult,
+      scheduleToolResult: atomicPlan.scheduleToolResult,
+      conflictCheckResult: atomicPlan.conflictCheckResult
+    };
+  }
   await emitEvent(onEvent, {
     type: 'stepSucceeded',
     stepId: 'step-6',
@@ -541,7 +692,6 @@ export async function runScheduleAgent({ userId, input, clarificationJson, onEve
       conflictCheckResult: atomicPlan.conflictCheckResult
     }
   });
-  const parsedTaskFromPython = buildParsedTaskFromAtomicPlan(input, normalizedContext, preference, atomicPlan);
   const canShowFinalPlans = canBuildFinalPlans(parsedTaskFromPython, atomicPlan.scheduleToolResult);
   const parsedTask = canShowFinalPlans ? ensureScheduleShape(parsedTaskFromPython, preference) : parsedTaskFromPython;
   const pythonAgentAck = canShowFinalPlans
@@ -556,7 +706,6 @@ export async function runScheduleAgent({ userId, input, clarificationJson, onEve
   const plans = canShowFinalPlans ? buildPlans(parsedTask, preference) : [];
   const conflicts = buildConflictsFromCheckResult(atomicPlan.conflictCheckResult);
 
-  const runId = `run-${Date.now()}`;
   await savePlanningSession(runId, {
     userId,
     rawInput: input,
@@ -565,11 +714,33 @@ export async function runScheduleAgent({ userId, input, clarificationJson, onEve
     atomicPlan
   });
 
-  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-7', message: '正在准备前端方案卡' });
+  await emitStepStarted(onEvent, 'step-7', '正在准备前端方案卡');
+  if (plans.length === 0) {
+    await emitEvent(onEvent, {
+      type: 'stepUpdated',
+      stepId: 'step-7',
+      output: { runId, status: '等待用户确认排期处理方式' }
+    });
+    return {
+      runId,
+      status: 'waitingConfirm',
+      rawInput: enrichedInput,
+      userPreference: preference,
+      parsedTask,
+      pythonAgentAck,
+      plans,
+      plan: undefined,
+      conflicts,
+      calendarEventsToolResult: atomicPlan.calendarEventsToolResult,
+      freeWindowsToolResult: atomicPlan.freeWindowsToolResult,
+      scheduleToolResult: atomicPlan.scheduleToolResult,
+      conflictCheckResult: atomicPlan.conflictCheckResult
+    };
+  }
   await emitEvent(onEvent, {
     type: 'stepSucceeded',
     stepId: 'step-7',
-    output: { runId, status: plans.length > 0 ? '等待用户选择方案' : '等待用户确认排期处理方式' }
+    output: { runId, status: '等待用户选择方案' }
   });
 
   return {

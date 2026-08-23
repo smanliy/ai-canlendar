@@ -20,6 +20,15 @@ export interface AgentClarification {
   clarificationJson: Record<string, unknown>;
 }
 
+export interface AgentConversationMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  kind: 'userInput' | 'directAnswer' | 'agentSummary' | 'command';
+  runId?: string;
+  createdAt: string;
+}
+
 export interface AgentUserPreference {
   preferredStartTime: string;
   preferredEndTime: string;

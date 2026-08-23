@@ -46,3 +46,44 @@ export function validateAgentDecisionPayload(payload: unknown): AgentDecisionPay
     taskId: taskId.trim()
   };
 }
+
+export interface AgentConversationMessagePayload {
+  role: 'user' | 'assistant';
+  kind: 'userInput' | 'directAnswer' | 'agentSummary' | 'command';
+  content: string;
+  runId?: string;
+  payload?: unknown;
+}
+
+export function validateAgentConversationMessagePayload(payload: unknown): AgentConversationMessagePayload {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Request body is required');
+  }
+
+  const role = (payload as { role?: unknown }).role;
+  const kind = (payload as { kind?: unknown }).kind;
+  const content = (payload as { content?: unknown }).content;
+  const runId = (payload as { runId?: unknown }).runId;
+  const messagePayload = (payload as { payload?: unknown }).payload;
+
+  if (role !== 'user' && role !== 'assistant') {
+    throw new Error('role must be user or assistant');
+  }
+  if (!['userInput', 'directAnswer', 'agentSummary', 'command'].includes(String(kind))) {
+    throw new Error('kind is invalid');
+  }
+  if (typeof content !== 'string' || !content.trim()) {
+    throw new Error('content is required');
+  }
+  if (content.trim().length > 8000) {
+    throw new Error('content is too long');
+  }
+
+  return {
+    role,
+    kind: kind as AgentConversationMessagePayload['kind'],
+    content: content.trim(),
+    runId: typeof runId === 'string' && runId.trim() ? runId.trim() : undefined,
+    payload: messagePayload
+  };
+}

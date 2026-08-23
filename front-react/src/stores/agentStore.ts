@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { createInitialSteps } from '../services/agentApi';
-import type { AgentClarification, AgentConflict, AgentRunStatus, AgentRunStep, SchedulePlan, SchedulePlanOption } from '../types/agent';
+import type { AgentClarification, AgentConflict, AgentConversationMessage, AgentRunStatus, AgentRunStep, SchedulePlan, SchedulePlanOption } from '../types/agent';
 
 interface AgentState {
   currentRunId: string | null;
@@ -18,6 +18,7 @@ interface AgentState {
   clarification: AgentClarification | null;
   clarificationInput: Record<string, string>;
   directAnswer: string | null;
+  conversationMessages: AgentConversationMessage[];
   confirmLoading: boolean;
   setUserInput: (value: string) => void;
   setSubmittedInput: (value: string) => void;
@@ -30,6 +31,9 @@ interface AgentState {
   setPlanOptions: (plans: SchedulePlanOption[], conflicts: AgentConflict[]) => void;
   setClarification: (clarification: AgentClarification | null) => void;
   setDirectAnswer: (answer: string | null) => void;
+  appendConversationMessage: (message: Omit<AgentConversationMessage, 'id' | 'createdAt'> & { id?: string; createdAt?: string }) => void;
+  hydrateConversationMessages: (messages: AgentConversationMessage[]) => void;
+  clearConversation: () => void;
   setClarificationInput: (field: string, value: string) => void;
   clearClarification: () => void;
   selectPlan: (planId: string | null) => void;
@@ -52,6 +56,7 @@ export const useAgentStore = create<AgentState>()(
     clarification: null,
     clarificationInput: {},
     directAnswer: null,
+    conversationMessages: [],
     confirmLoading: false,
     setUserInput: (value) =>
       set((state) => {
@@ -141,6 +146,39 @@ export const useAgentStore = create<AgentState>()(
     setDirectAnswer: (answer) =>
       set((state) => {
         state.directAnswer = answer;
+      }),
+    appendConversationMessage: (message) =>
+      set((state) => {
+        state.conversationMessages.push({
+          id: message.id ?? `${message.role}-${Date.now()}-${state.conversationMessages.length + 1}`,
+          role: message.role,
+          content: message.content,
+          kind: message.kind,
+          runId: message.runId,
+          createdAt: message.createdAt ?? new Date().toISOString()
+        });
+      }),
+    hydrateConversationMessages: (messages) =>
+      set((state) => {
+        state.conversationMessages = messages;
+      }),
+    clearConversation: () =>
+      set((state) => {
+        state.currentRunId = null;
+        state.userInput = '';
+        state.submittedInput = '';
+        state.revisionInput = '';
+        state.runStatus = 'idle';
+        state.steps = createInitialSteps();
+        state.plan = null;
+        state.planOptions = [];
+        state.selectedPlanId = null;
+        state.conflicts = [];
+        state.clarification = null;
+        state.clarificationInput = {};
+        state.directAnswer = null;
+        state.conversationMessages = [];
+        state.confirmLoading = false;
       }),
     setClarificationInput: (field, value) =>
       set((state) => {

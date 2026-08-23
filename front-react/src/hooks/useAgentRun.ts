@@ -1,7 +1,7 @@
 ﻿import { useCallback } from 'react';
 import { App as AntApp } from 'antd';
 
-import { agentApi, type AgentStreamEvent, type SchedulePlanResult } from '../services/agentApi';
+import { agentApi, type AgentStreamEvent, type ConversationMessagePayload, type SchedulePlanResult } from '../services/agentApi';
 import { eventApi } from '../services/eventApi';
 import { useAgentStore } from '../stores/agentStore';
 import type { AgentRunStep, CalendarEventsToolResult, ConflictCheckResult, FreeWindowsToolResult, ScheduleToolResult } from '../types/agent';
@@ -10,6 +10,19 @@ import type { EventPayload } from '../types/event';
 const TYPEWRITER_DELAY_MS = 28;
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+function appendAndPersistConversationMessage(message: ConversationMessagePayload) {
+  useAgentStore.getState().appendConversationMessage(message);
+  void agentApi.saveConversationMessage(message).catch((error) => {
+    console.error('[Agent Conversation] save message failed:', error);
+  });
+}
+
+function clearPersistedConversationMessages() {
+  void agentApi.clearConversationMessages().catch((error) => {
+    console.error('[Agent Conversation] clear messages failed:', error);
+  });
+}
 
 function normalizeCalendarEventsResult(value: CalendarEventsToolResult | undefined) {
   return {
@@ -102,6 +115,12 @@ function applyFinalResult(result: SchedulePlanResult, prompt: string) {
       reasons: result.reasons,
       clarificationJson: result.clarificationJson
     });
+    appendAndPersistConversationMessage({
+      role: 'assistant',
+      content: result.message,
+      kind: 'agentSummary',
+      runId: result.runId
+    });
     setRunStatus('needsUserInput');
     return;
   }
@@ -110,6 +129,12 @@ function applyFinalResult(result: SchedulePlanResult, prompt: string) {
     setCurrentRunId(result.runId);
     clearClarification();
     setPlanOptions(result.plans, result.conflicts);
+    appendAndPersistConversationMessage({
+      role: 'assistant',
+      content: result.plans.length > 0 ? `已生成 ${result.plans.length} 个排期方案，等待你选择后写入日历。` : '当前排期需要你先确认处理方式。',
+      kind: 'agentSummary',
+      runId: result.runId
+    });
     return;
   }
 
@@ -122,7 +147,8 @@ function applyFinalResult(result: SchedulePlanResult, prompt: string) {
 
   if (result.status === 'commandResult') {
     if (result.command === 'clear') {
-      useAgentStore.getState().resetRun();
+      useAgentStore.getState().clearConversation();
+      clearPersistedConversationMessages();
       return;
     }
     useAgentStore.getState().setRunStatus('success');
@@ -144,6 +170,14 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
 
       const runId = `run-${Date.now()}`;
       startRun(runId, prompt);
+      if (prompt !== '/clear') {
+        appendAndPersistConversationMessage({
+          role: 'user',
+          content: prompt,
+          kind: 'userInput',
+          runId
+        });
+      }
 
       try {
         let eventQueue = Promise.resolve();
@@ -158,6 +192,11 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
           const store = useAgentStore.getState();
           if (event.type === 'stepStarted') {
             store.updateStep(event.stepId, 'running', event.message ? { message: event.message } : undefined);
+            return;
+          }
+
+          if (event.type === 'stepUpdated') {
+            store.updateStep(event.stepId, 'running', event.output);
             return;
           }
 
@@ -176,18 +215,32 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
             store.setSubmittedInput(prompt);
             store.setRunStatus('running');
             await typeDirectAnswer(event.answer, store.setDirectAnswer);
+            appendAndPersistConversationMessage({
+              role: 'assistant',
+              content: event.answer,
+              kind: 'directAnswer'
+            });
+            store.setDirectAnswer(null);
             store.setRunStatus('success');
             return;
           }
 
           if (event.type === 'commandResult') {
             if (event.command === 'clear') {
-              store.resetRun();
+              store.clearConversation();
+              clearPersistedConversationMessages();
             } else {
               store.resetRun();
               store.setSubmittedInput(prompt);
               store.setRunStatus('running');
-              await typeDirectAnswer(event.summary ? `${event.message}\n\n${event.summary}` : event.message, store.setDirectAnswer);
+              const commandContent = event.summary ? `${event.message}\n\n${event.summary}` : event.message;
+              await typeDirectAnswer(commandContent, store.setDirectAnswer);
+              appendAndPersistConversationMessage({
+                role: 'assistant',
+                content: commandContent,
+                kind: 'command'
+              });
+              store.setDirectAnswer(null);
               store.setRunStatus('success');
             }
             message.success(event.message);
@@ -196,7 +249,6 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
 
           if (event.type === 'final') {
             latestFinalResult = event.data;
-            applyFinalResult(event.data, prompt);
             return;
           }
 
@@ -317,6 +369,12 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
       });
       await eventApi.bulkCreateEvents(payloads, currentRunId);
       updateStep('step-8', 'success', { created: payloads.length });
+      appendAndPersistConversationMessage({
+        role: 'assistant',
+        content: `已写入日历，共创建 ${payloads.length} 条日程。本轮排期已结束。`,
+        kind: 'agentSummary',
+        runId: currentRunId
+      });
       message.success('已写入日历');
       await onEventsCreated();
       useAgentStore.getState().resetRun();

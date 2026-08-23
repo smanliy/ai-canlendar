@@ -48,6 +48,20 @@ function readResearchSources(output: unknown): ResearchSource[] {
   return Array.isArray(value) ? (value as ResearchSource[]) : [];
 }
 
+function formatJson(value: unknown, fallback = '{}') {
+  if (value === undefined || value === null || value === '') return fallback;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return fallback;
+  }
+}
+
+function readResearchToolResultsJson(output: unknown) {
+  if (!output || typeof output !== 'object' || !('researchToolResults' in output)) return '';
+  return formatJson((output as { researchToolResults?: unknown }).researchToolResults, '[]');
+}
+
 function readStepMessage(output: unknown): string {
   if (!output || typeof output !== 'object' || !('message' in output)) return '';
   const value = (output as { message?: unknown }).message;
@@ -96,13 +110,28 @@ function readFreeWindowsJson(output: unknown) {
   if (!output || typeof output !== 'object' || !('freeWindowsResult' in output)) return '';
   const value = (output as { freeWindowsResult?: unknown }).freeWindowsResult;
   if (!value || typeof value !== 'object') return '';
-  return JSON.stringify(value, null, 2);
+  return formatJson(value);
 }
 
 function readScheduleResult(output: unknown) {
   if (!output || typeof output !== 'object' || !('scheduleToolResult' in output)) return null;
   const value = (output as { scheduleToolResult?: unknown }).scheduleToolResult;
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function readCalendarEventsJson(output: unknown) {
+  if (!output || typeof output !== 'object' || !('calendarEventsResult' in output)) return '';
+  return formatJson((output as { calendarEventsResult?: unknown }).calendarEventsResult);
+}
+
+function readScheduleResultJson(output: unknown) {
+  if (!output || typeof output !== 'object' || !('scheduleToolResult' in output)) return '';
+  return formatJson((output as { scheduleToolResult?: unknown }).scheduleToolResult);
+}
+
+function readConflictCheckResultJson(output: unknown) {
+  if (!output || typeof output !== 'object' || !('conflictCheckResult' in output)) return '';
+  return formatJson((output as { conflictCheckResult?: unknown }).conflictCheckResult);
 }
 
 function readScheduleInterrupt(output: unknown) {
@@ -225,7 +254,6 @@ function readScheduleStatus(output: unknown) {
 
 export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onScheduleDecision, variant = 'compact' }: AgentChatPanelProps) {
   const userInput = useAgentStore((state) => state.userInput);
-  const submittedInput = useAgentStore((state) => state.submittedInput);
   const revisionInput = useAgentStore((state) => state.revisionInput);
   const runStatus = useAgentStore((state) => state.runStatus);
   const steps = useAgentStore((state) => state.steps);
@@ -235,13 +263,15 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
   const clarification = useAgentStore((state) => state.clarification);
   const clarificationInput = useAgentStore((state) => state.clarificationInput);
   const directAnswer = useAgentStore((state) => state.directAnswer);
+  const conversationMessages = useAgentStore((state) => state.conversationMessages);
   const confirmLoading = useAgentStore((state) => state.confirmLoading);
   const setUserInput = useAgentStore((state) => state.setUserInput);
   const setRevisionInput = useAgentStore((state) => state.setRevisionInput);
   const setClarificationInput = useAgentStore((state) => state.setClarificationInput);
   const selectPlan = useAgentStore((state) => state.selectPlan);
   const loading = runStatus === 'running';
-  const hasVisibleAgentSteps = steps.some((step) => step.status !== 'pending');
+  const visibleSteps = steps.filter((step) => step.status !== 'pending');
+  const hasVisibleAgentSteps = visibleSteps.length > 0;
   const visibleClarificationReasons = clarification
     ? clarification.reasons.filter((reason) => {
         if (reason.includes('duration') && clarificationInput.duration?.trim()) return false;
@@ -263,7 +293,7 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
           <p>告诉我你的目标、截止时间、花费时间和偏好。我会在拆解子任务时判断信息是否足够。</p>
         </div>
 
-        {runStatus === 'idle' && !userInput && !submittedInput ? (
+        {runStatus === 'idle' && !userInput && conversationMessages.length === 0 ? (
           <div className="agent-empty-scene" aria-hidden="true">
             <div className="agent-scene-note note-a">focus</div>
             <div className="agent-scene-note note-b">plan</div>
@@ -286,12 +316,12 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
           </div>
         ) : null}
 
-        {submittedInput ? (
-          <div className="chat-message user">
-            <strong>你</strong>
-            <p>{submittedInput}</p>
+        {conversationMessages.map((item) => (
+          <div className={`chat-message ${item.role === 'user' ? 'user' : 'assistant'}`} key={item.id}>
+            <strong>{item.role === 'user' ? '你' : 'ChronoAgent'}</strong>
+            <p>{item.content}</p>
           </div>
-        ) : null}
+        ))}
 
         {directAnswer ? (
           <div className="chat-message assistant">
@@ -304,7 +334,7 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
           <div className="chat-message assistant">
             <strong>ChronoAgent</strong>
             <div className="agent-step-list">
-              {steps.map((step) => (
+              {visibleSteps.map((step) => (
                 <div className="agent-step-block" key={step.id}>
                   <button className="agent-step-row" type="button">
                     {statusIcon[step.status]}
@@ -336,6 +366,10 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
                           ))}
                         </div>
                       ) : null}
+                      <pre className="agent-json-result-box">
+                        {readResearchToolResultsJson(step.output) ||
+                          '[\n  {\n    "tool": "web_search",\n    "args": {},\n    "results": [],\n    "errors": ["外部工具结果尚未返回"]\n  }\n]'}
+                      </pre>
                     </div>
                   ) : null}
 
@@ -367,6 +401,10 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
                           <div className="agent-calendar-empty">当前查询范围内没有已有日程。</div>
                         )}
                       </div>
+                      <pre className="agent-json-result-box">
+                        {readCalendarEventsJson(step.output) ||
+                          '{\n  "tool": "calendar_events_query",\n  "args": {},\n  "events": [],\n  "errors": ["本地日程查询结果尚未返回"]\n}'}
+                      </pre>
                     </div>
                   ) : null}
 
@@ -407,6 +445,10 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
                           ))}
                         </div>
                       ) : null}
+                      <pre className="agent-json-result-box">
+                        {readScheduleResultJson(step.output) ||
+                          '{\n  "tool": "schedule_tasks",\n  "status": "pending",\n  "draftAllocations": [],\n  "remainingFreeWindows": [],\n  "errors": ["排期工具结果尚未返回"]\n}'}
+                      </pre>
                       {readScheduleInterrupt(step.output) ? (
                         <div className="agent-decision-panel">
                           <div className="agent-decision-copy">
@@ -433,6 +475,16 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
                           </div>
                         </div>
                       ) : null}
+                    </div>
+                  ) : null}
+
+                  {step.id === 'step-6' && step.status !== 'pending' ? (
+                    <div className="agent-tool-trace-panel">
+                      <p>{readStepMessage(step.output) || '已检测时间冲突'}</p>
+                      <pre className="agent-json-result-box">
+                        {readConflictCheckResultJson(step.output) ||
+                          '{\n  "tool": "check_schedule_conflicts",\n  "status": "pending",\n  "summary": {},\n  "conflicts": [],\n  "errors": ["冲突检测结果尚未返回"]\n}'}
+                      </pre>
                     </div>
                   ) : null}
 

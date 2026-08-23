@@ -1,9 +1,13 @@
+import { useEffect } from 'react';
+
 import { AgentChatPanel } from '../features/agent/AgentChatPanel';
 import { AgentContextPanel } from '../features/agent/AgentContextPanel';
 import { EventModal } from '../features/calendar/EventModal';
 import { useAgentRun } from '../hooks/useAgentRun';
 import { useCalendarEvents } from '../hooks/useCalendarEvents';
 import { AppLayout } from '../layouts/AppLayout';
+import { agentApi } from '../services/agentApi';
+import { useAgentStore } from '../stores/agentStore';
 import type { AppPageKey } from '../layouts/Sidebar';
 
 interface AgentWorkspacePageProps {
@@ -14,6 +18,25 @@ interface AgentWorkspacePageProps {
 export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePageProps) {
   const { events, fetchEvents, createEvent, updateEvent, deleteEvent } = useCalendarEvents();
   const { generatePlan, confirmPlan, revisePlan, submitScheduleDecision, resetRun } = useAgentRun(fetchEvents);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    agentApi
+      .listConversationMessages()
+      .then((messages) => {
+        if (!cancelled && useAgentStore.getState().conversationMessages.length === 0) {
+          useAgentStore.getState().hydrateConversationMessages(messages);
+        }
+      })
+      .catch((error) => {
+        console.error('[Agent Conversation] load messages failed:', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <AppLayout

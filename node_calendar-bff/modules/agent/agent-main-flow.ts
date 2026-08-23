@@ -45,6 +45,7 @@ interface RunMainFlowInput {
 
 export type AgentMainFlowEvent =
   | { type: 'stepStarted'; stepId: string; message?: string }
+  | { type: 'stepUpdated'; stepId: string; output?: unknown }
   | { type: 'stepSucceeded'; stepId: string; output?: unknown }
   | { type: 'stepFailed'; stepId: string; output?: unknown }
   | { type: 'directAnswer'; answer: string; reason: string }

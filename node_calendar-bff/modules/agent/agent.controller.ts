@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 
 import * as agentService from './agent.service';
 import { getAgentHttpStatus } from './agent.errors';
-import { validateAgentDecisionPayload, validateCreateAgentRunPayload } from './agent.schema';
+import { validateAgentConversationMessagePayload, validateAgentDecisionPayload, validateCreateAgentRunPayload } from './agent.schema';
 import * as eventService from '../events/events.service';
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -78,6 +78,88 @@ export async function submitDecision(req: Request, res: Response): Promise<void>
     res.status(statusCode).json({
       code: statusCode,
       message: getErrorMessage(error, 'Agent decision failed'),
+      data: null
+    });
+  }
+}
+
+export async function listConversationMessages(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user?.id) {
+      res.status(401).json({
+        code: 401,
+        message: 'Unauthorized',
+        data: null
+      });
+      return;
+    }
+
+    const data = await agentService.listConversationMessages(req.user.id);
+    res.status(200).json({
+      code: 0,
+      message: 'ok',
+      data
+    });
+  } catch (error) {
+    const statusCode = getAgentHttpStatus(error);
+    res.status(statusCode).json({
+      code: statusCode,
+      message: getErrorMessage(error, '查询 Agent 会话消息失败'),
+      data: null
+    });
+  }
+}
+
+export async function saveConversationMessage(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user?.id) {
+      res.status(401).json({
+        code: 401,
+        message: 'Unauthorized',
+        data: null
+      });
+      return;
+    }
+
+    const payload = validateAgentConversationMessagePayload(req.body);
+    const data = await agentService.saveConversationMessage(req.user.id, payload);
+    res.status(201).json({
+      code: 0,
+      message: 'ok',
+      data
+    });
+  } catch (error) {
+    const statusCode = getAgentHttpStatus(error);
+    res.status(statusCode).json({
+      code: statusCode,
+      message: getErrorMessage(error, '保存 Agent 会话消息失败'),
+      data: null
+    });
+  }
+}
+
+export async function clearConversationMessages(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user?.id) {
+      res.status(401).json({
+        code: 401,
+        message: 'Unauthorized',
+        data: null
+      });
+      return;
+    }
+
+    await agentService.clearConversationMessages(req.user.id);
+    res.status(200).json({
+      code: 0,
+      message: 'ok',
+      data: { cleared: true }
+    });
+  } catch (error) {
+    const statusCode = getAgentHttpStatus(error);
+    res.status(statusCode).json({
+      code: statusCode,
+      message: getErrorMessage(error, '清空 Agent 会话消息失败'),
       data: null
     });
   }

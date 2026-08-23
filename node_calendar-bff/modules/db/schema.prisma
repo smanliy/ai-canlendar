@@ -23,6 +23,7 @@ model User {
     preference            UserPreference?
     events                CalendarEvent[]
     agentPlanningSessions AgentPlanningSession[]
+    agentMessages         AgentConversationMessage[]
 }
 
 model SmsCode {
@@ -111,4 +112,23 @@ model AgentPlanningSession {
 
     @@index([userId])
     @@index([userId, updatedAt])
+}
+
+model AgentConversationMessage {
+    id        String    @id @default(uuid())
+    userId    String
+    role      String
+    kind      String
+    content   String
+    runId     String?
+    payload   Json?
+    expiresAt DateTime  @default(dbgenerated("(now() + '30 days'::interval)"))
+    createdAt DateTime  @default(now())
+    deletedAt DateTime?
+
+    user User @relation(fields: [userId], references: [id])
+
+    @@index([userId, createdAt])
+    @@index([userId, expiresAt])
+    @@index([runId])
 }

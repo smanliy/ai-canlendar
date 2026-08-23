@@ -1,7 +1,20 @@
 import dayjs from 'dayjs';
 
 import { useAuthStore } from '../stores/authStore';
-import type { AgentRunDetail, AgentRunStep, AgentRunStatus, AgentUserPreference, CalendarEventsToolResult, ConflictCheckResult, FreeWindowsToolResult, SchedulePlan, SchedulePlanOption, ScheduleToolResult, SplitResult } from '../types/agent';
+import type {
+  AgentConversationMessage,
+  AgentRunDetail,
+  AgentRunStep,
+  AgentRunStatus,
+  AgentUserPreference,
+  CalendarEventsToolResult,
+  ConflictCheckResult,
+  FreeWindowsToolResult,
+  SchedulePlan,
+  SchedulePlanOption,
+  ScheduleToolResult,
+  SplitResult
+} from '../types/agent';
 
 interface ApiResponse<T> {
   code: number;
@@ -46,12 +59,17 @@ export type SchedulePlanResult =
 
 export type AgentStreamEvent =
   | { type: 'stepStarted'; stepId: string; message?: string }
+  | { type: 'stepUpdated'; stepId: string; output?: unknown }
   | { type: 'stepSucceeded'; stepId: string; output?: unknown }
   | { type: 'stepFailed'; stepId: string; output?: unknown }
   | { type: 'directAnswer'; answer: string; reason: string }
   | { type: 'commandResult'; command: 'clear' | 'compat'; message: string; summary?: string }
   | { type: 'final'; data: SchedulePlanResult }
   | { type: 'error'; message: string; code?: number };
+
+export type ConversationMessagePayload = Omit<AgentConversationMessage, 'id' | 'createdAt'> & {
+  payload?: unknown;
+};
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 const CSRF_COOKIE_NAME = 'chrono_csrf_token';
@@ -147,6 +165,10 @@ export const createInitialSteps = (): AgentRunStep[] =>
     updatedAt: now()
   }));
 
+function readResultStatus(value: unknown): string {
+  return value && typeof value === 'object' && typeof (value as { status?: unknown }).status === 'string' ? (value as { status: string }).status : '';
+}
+
 async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event: AgentStreamEvent) => void | Promise<void>) {
   if (result.status === 'commandResult') {
     await onEvent({
@@ -171,7 +193,7 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
 
   if (result.status === 'needsUserInput') {
     await onEvent({
-      type: 'stepFailed',
+      type: 'stepUpdated',
       stepId: 'step-1',
       output: { message: result.message, reasons: result.reasons }
     });
@@ -201,21 +223,29 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
     }
   });
   await onEvent({
-    type: 'stepSucceeded',
+    type: readResultStatus(result.scheduleToolResult) === 'needsDecision' ? 'stepUpdated' : 'stepSucceeded',
     stepId: 'step-5',
     output: {
-      message: '已调用 Python 排期工具生成草稿方案',
+      message: readResultStatus(result.scheduleToolResult) === 'needsDecision' ? '排期工具需要用户决策后才能继续' : '已调用 Python 排期工具生成草稿方案',
       scheduleToolResult: result.scheduleToolResult
     }
   });
+  if (readResultStatus(result.scheduleToolResult) === 'needsDecision' || readResultStatus(result.scheduleToolResult) === 'pending') {
+    await onEvent({ type: 'final', data: result });
+    return;
+  }
   await onEvent({
-    type: 'stepSucceeded',
+    type: readResultStatus(result.conflictCheckResult) === 'needsDecision' ? 'stepUpdated' : 'stepSucceeded',
     stepId: 'step-6',
     output: {
-      message: result.conflicts.length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突',
+      message: readResultStatus(result.conflictCheckResult) === 'needsDecision' ? '检测到未确认冲突，需要处理后才能继续' : result.conflicts.length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突',
       conflictCheckResult: result.conflictCheckResult
     }
   });
+  if (readResultStatus(result.conflictCheckResult) === 'needsDecision' || readResultStatus(result.conflictCheckResult) === 'pending') {
+    await onEvent({ type: 'final', data: result });
+    return;
+  }
   await onEvent({
     type: 'stepSucceeded',
     stepId: 'step-7',
@@ -228,6 +258,23 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
 }
 
 export const agentApi = {
+  async listConversationMessages(): Promise<AgentConversationMessage[]> {
+    return request<AgentConversationMessage[]>('/agent/messages');
+  },
+
+  async saveConversationMessage(message: ConversationMessagePayload): Promise<AgentConversationMessage> {
+    return request<AgentConversationMessage>('/agent/messages', {
+      method: 'POST',
+      body: JSON.stringify(message)
+    });
+  },
+
+  async clearConversationMessages(): Promise<{ cleared: true }> {
+    return request<{ cleared: true }>('/agent/messages', {
+      method: 'DELETE'
+    });
+  },
+
   async schedulePlanStream(
     input: string,
     clarificationJson: unknown,

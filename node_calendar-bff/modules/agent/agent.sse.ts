@@ -15,6 +15,7 @@ function writeSse(res: Response, event: string, data: unknown): void {
 
 function eventName(event: AgentMainFlowEvent): string {
   if (event.type === 'stepStarted') return 'step:start';
+  if (event.type === 'stepUpdated') return 'step:update';
   if (event.type === 'stepSucceeded') return 'step:success';
   if (event.type === 'stepFailed') return 'step:failed';
   if (event.type === 'directAnswer') return 'direct:answer';
