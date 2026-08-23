@@ -225,6 +225,7 @@ function readScheduleStatus(output: unknown) {
 
 export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onScheduleDecision, variant = 'compact' }: AgentChatPanelProps) {
   const userInput = useAgentStore((state) => state.userInput);
+  const submittedInput = useAgentStore((state) => state.submittedInput);
   const revisionInput = useAgentStore((state) => state.revisionInput);
   const runStatus = useAgentStore((state) => state.runStatus);
   const steps = useAgentStore((state) => state.steps);
@@ -233,12 +234,14 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
   const conflicts = useAgentStore((state) => state.conflicts);
   const clarification = useAgentStore((state) => state.clarification);
   const clarificationInput = useAgentStore((state) => state.clarificationInput);
+  const directAnswer = useAgentStore((state) => state.directAnswer);
   const confirmLoading = useAgentStore((state) => state.confirmLoading);
   const setUserInput = useAgentStore((state) => state.setUserInput);
   const setRevisionInput = useAgentStore((state) => state.setRevisionInput);
   const setClarificationInput = useAgentStore((state) => state.setClarificationInput);
   const selectPlan = useAgentStore((state) => state.selectPlan);
   const loading = runStatus === 'running';
+  const hasVisibleAgentSteps = steps.some((step) => step.status !== 'pending');
   const visibleClarificationReasons = clarification
     ? clarification.reasons.filter((reason) => {
         if (reason.includes('duration') && clarificationInput.duration?.trim()) return false;
@@ -260,7 +263,7 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
           <p>告诉我你的目标、截止时间、花费时间和偏好。我会在拆解子任务时判断信息是否足够。</p>
         </div>
 
-        {runStatus === 'idle' && !userInput ? (
+        {runStatus === 'idle' && !userInput && !submittedInput ? (
           <div className="agent-empty-scene" aria-hidden="true">
             <div className="agent-scene-note note-a">focus</div>
             <div className="agent-scene-note note-b">plan</div>
@@ -283,14 +286,21 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
           </div>
         ) : null}
 
-        {userInput ? (
+        {submittedInput ? (
           <div className="chat-message user">
             <strong>你</strong>
-            <p>{userInput}</p>
+            <p>{submittedInput}</p>
           </div>
         ) : null}
 
-        {runStatus !== 'idle' ? (
+        {directAnswer ? (
+          <div className="chat-message assistant">
+            <strong>ChronoAgent</strong>
+            <p>{directAnswer}</p>
+          </div>
+        ) : null}
+
+        {runStatus !== 'idle' && !directAnswer && hasVisibleAgentSteps ? (
           <div className="chat-message assistant">
             <strong>ChronoAgent</strong>
             <div className="agent-step-list">

@@ -2,13 +2,15 @@ import { prisma } from '../db/prisma';
 import { parseTaskWithDeepSeek } from './deepseek';
 import { extractAgentFieldsWithDeepSeek, type AgentFieldExtraction } from './field-extractor';
 import { planAtomicTasksWithPython, resumeScheduleWithPython, sendTaskToPythonAgent, validateAgentFieldsWithPython, type PythonPlanResult } from './python-agent';
-import type { AgentCreateRunResponse, AgentDecisionResponse, AgentUserPreference, ParsedScheduleTask, ParsedSubtask, PlanItem, SchedulePlanOption } from './agent.types';
+import type { AgentClarificationResponse, AgentDecisionResponse, AgentRunResponse, AgentUserPreference, ParsedScheduleTask, ParsedSubtask, PlanItem, SchedulePlanOption } from './agent.types';
+import type { AgentMainFlowEventHandler } from './agent-main-flow';
 import { findPlanningSession, savePlanningSession, updatePlanningSessionAtomicPlan } from './agent-planning-session.repository';
 
 interface RunScheduleAgentInput {
   userId: string;
   input: string;
   clarificationJson?: unknown;
+  onEvent?: AgentMainFlowEventHandler;
 }
 
 type UserPreferenceLike = AgentUserPreference;
@@ -262,6 +264,38 @@ function buildPlans(parsedTask: ParsedScheduleTask, preference: UserPreferenceLi
     deadline: parsedTask.deadline,
     totalHours,
     summary: variant.summary,
+    reason: `${variant.summary} Deadline: ${parsedTask.deadline}. Preference window: ${preference.preferredStartTime}-${preference.preferredEndTime}.`,
+    warnings: [],
+    editableTextRegions: [
+      {
+        id: `${variant.id}-title`,
+        planCardId: variant.id,
+        path: 'taskName',
+        text: parsedTask.taskName,
+        kind: 'title'
+      },
+      {
+        id: `${variant.id}-summary`,
+        planCardId: variant.id,
+        path: 'summary',
+        text: variant.summary,
+        kind: 'summary'
+      },
+      {
+        id: `${variant.id}-reason`,
+        planCardId: variant.id,
+        path: 'reason',
+        text: `${variant.summary} Deadline: ${parsedTask.deadline}. Preference window: ${preference.preferredStartTime}-${preference.preferredEndTime}.`,
+        kind: 'reason'
+      },
+      ...items.map((item, index) => ({
+        id: `${variant.id}-item-${index + 1}-title`,
+        planCardId: variant.id,
+        path: `items.${index}.title`,
+        text: item.title,
+        kind: 'block_title' as const
+      }))
+    ],
     items
   }));
 }
@@ -388,10 +422,37 @@ async function convertFieldsWithLlm(input: string, preference: UserPreferenceLik
   }
 }
 
-export async function runScheduleAgent({ userId, input, clarificationJson }: RunScheduleAgentInput): Promise<AgentCreateRunResponse> {
+async function emitEvent(onEvent: AgentMainFlowEventHandler | undefined, event: Parameters<AgentMainFlowEventHandler>[0]): Promise<void> {
+  await onEvent?.(event);
+}
+
+function collectResearchSourcesFromToolResults(toolResults: unknown): unknown[] {
+  const results = Array.isArray(toolResults) ? toolResults : [];
+  return results
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .flatMap((item) => {
+      const query = typeof item.query === 'string' ? item.query : '';
+      const provider = typeof item.provider === 'string' ? item.provider : '';
+      const sourceResults = Array.isArray(item.results) ? item.results : [];
+      return sourceResults
+        .filter((source): source is Record<string, unknown> => Boolean(source) && typeof source === 'object')
+        .map((source) => ({
+          title: typeof source.title === 'string' ? source.title : '',
+          url: typeof source.url === 'string' ? source.url : '',
+          snippet: typeof source.snippet === 'string' ? source.snippet : '',
+          query,
+          provider,
+          tool: typeof item.tool === 'string' ? item.tool : 'web_search'
+        }));
+    })
+    .slice(0, 8);
+}
+
+export async function runScheduleAgent({ userId, input, clarificationJson, onEvent }: RunScheduleAgentInput): Promise<AgentRunResponse | AgentClarificationResponse> {
   const preference = await getPreference(userId);
   const nowIso = new Date().toISOString();
 
+  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-1', message: '正在解析用户输入并校验必填信息' });
   const llmExtraction = await convertFieldsWithLlm(input, preference, clarificationJson, nowIso);
 
   const validation = await validateAgentFieldsWithPython({
@@ -403,7 +464,7 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
   });
 
   if (validation.status === 'needsUserInput') {
-    return {
+    const response: AgentClarificationResponse = {
       runId: `run-${Date.now()}`,
       status: 'needsUserInput',
       rawInput: input,
@@ -411,9 +472,17 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
       reasons: validation.reasons,
       clarificationJson: validation.clarificationJson
     };
+    await emitEvent(onEvent, {
+      type: 'stepFailed',
+      stepId: 'step-1',
+      output: { message: validation.message, reasons: validation.reasons }
+    });
+    return response;
   }
 
   const normalizedContext = validation.normalizedContext;
+  await emitEvent(onEvent, { type: 'stepSucceeded', stepId: 'step-1', output: { message: '用户输入已解析' } });
+  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-2', message: '正在拆解子任务并查询外部资料' });
   const enrichedInput = buildInputWithAgentContext(input, normalizedContext);
   const atomicPlan = await planAtomicTasksWithPython({
     userId,
@@ -422,11 +491,56 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
     normalizedContext
   });
   if (atomicPlan.status === 'failed') {
+    await emitEvent(onEvent, {
+      type: 'stepFailed',
+      stepId: 'step-2',
+      output: { message: `Python Agent 工具规划失败：${atomicPlan.feasibility.issues.join('；') || '请检查外部搜索工具配置'}` }
+    });
     throw new Error(`Python Agent 工具规划失败：${atomicPlan.feasibility.issues.join('；') || '请检查外部搜索工具配置'}`);
   }
   if (atomicPlan.status === 'overloaded') {
+    await emitEvent(onEvent, {
+      type: 'stepFailed',
+      stepId: 'step-2',
+      output: { message: `任务体量超过可用时长：${atomicPlan.feasibility.issues.join('；') || '请删减任务、增加可用时间或延后截止日期'}` }
+    });
     throw new Error(`任务体量超过可用时长：${atomicPlan.feasibility.issues.join('；') || '请删减任务、增加可用时间或延后截止日期'}`);
   }
+  await emitEvent(onEvent, {
+    type: 'stepSucceeded',
+    stepId: 'step-2',
+    output: {
+      message: '子任务拆解完成，已查询外部资料来源',
+      researchSources: collectResearchSourcesFromToolResults(atomicPlan.toolResults)
+    }
+  });
+  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-3', message: '正在查询用户本地日程' });
+  await emitEvent(onEvent, {
+    type: 'stepSucceeded',
+    stepId: 'step-3',
+    output: { message: '已查询用户本地日程', calendarEventsResult: atomicPlan.calendarEventsToolResult }
+  });
+  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-4', message: '正在计算本地空闲时间' });
+  await emitEvent(onEvent, {
+    type: 'stepSucceeded',
+    stepId: 'step-4',
+    output: { message: '已根据本地日程和用户偏好计算空闲时间', freeWindowsResult: atomicPlan.freeWindowsToolResult }
+  });
+  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-5', message: '正在生成排期草稿方案' });
+  await emitEvent(onEvent, {
+    type: 'stepSucceeded',
+    stepId: 'step-5',
+    output: { message: '已调用 Python 排期工具生成草稿方案', scheduleToolResult: atomicPlan.scheduleToolResult }
+  });
+  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-6', message: '正在检测时间冲突' });
+  await emitEvent(onEvent, {
+    type: 'stepSucceeded',
+    stepId: 'step-6',
+    output: {
+      message: buildConflictsFromCheckResult(atomicPlan.conflictCheckResult).length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突',
+      conflictCheckResult: atomicPlan.conflictCheckResult
+    }
+  });
   const parsedTaskFromPython = buildParsedTaskFromAtomicPlan(input, normalizedContext, preference, atomicPlan);
   const canShowFinalPlans = canBuildFinalPlans(parsedTaskFromPython, atomicPlan.scheduleToolResult);
   const parsedTask = canShowFinalPlans ? ensureScheduleShape(parsedTaskFromPython, preference) : parsedTaskFromPython;
@@ -449,6 +563,13 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
     userPreference: preference,
     normalizedContext,
     atomicPlan
+  });
+
+  await emitEvent(onEvent, { type: 'stepStarted', stepId: 'step-7', message: '正在准备前端方案卡' });
+  await emitEvent(onEvent, {
+    type: 'stepSucceeded',
+    stepId: 'step-7',
+    output: { runId, status: plans.length > 0 ? '等待用户选择方案' : '等待用户确认排期处理方式' }
   });
 
   return {

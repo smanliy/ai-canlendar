@@ -11,6 +11,20 @@ interface ApiResponse<T> {
 
 export type SchedulePlanResult =
   | {
+      status: 'commandResult';
+      runId: string;
+      command: 'clear' | 'compat';
+      message: string;
+      summary?: string;
+    }
+  | {
+      status: 'llmAnswer';
+      runId: string;
+      rawInput: string;
+      answer: string;
+      reason: string;
+    }
+  | {
       status: 'needsUserInput';
       runId: string;
       rawInput: string;
@@ -29,6 +43,15 @@ export type SchedulePlanResult =
       scheduleToolResult?: ScheduleToolResult;
       conflictCheckResult?: ConflictCheckResult;
     };
+
+export type AgentStreamEvent =
+  | { type: 'stepStarted'; stepId: string; message?: string }
+  | { type: 'stepSucceeded'; stepId: string; output?: unknown }
+  | { type: 'stepFailed'; stepId: string; output?: unknown }
+  | { type: 'directAnswer'; answer: string; reason: string }
+  | { type: 'commandResult'; command: 'clear' | 'compat'; message: string; summary?: string }
+  | { type: 'final'; data: SchedulePlanResult }
+  | { type: 'error'; message: string; code?: number };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 const CSRF_COOKIE_NAME = 'chrono_csrf_token';
@@ -124,13 +147,185 @@ export const createInitialSteps = (): AgentRunStep[] =>
     updatedAt: now()
   }));
 
+async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event: AgentStreamEvent) => void | Promise<void>) {
+  if (result.status === 'commandResult') {
+    await onEvent({
+      type: 'commandResult',
+      command: result.command,
+      message: result.message,
+      summary: result.summary
+    });
+    await onEvent({ type: 'final', data: result });
+    return;
+  }
+
+  if (result.status === 'llmAnswer') {
+    await onEvent({
+      type: 'directAnswer',
+      answer: result.answer,
+      reason: result.reason
+    });
+    await onEvent({ type: 'final', data: result });
+    return;
+  }
+
+  if (result.status === 'needsUserInput') {
+    await onEvent({
+      type: 'stepFailed',
+      stepId: 'step-1',
+      output: { message: result.message, reasons: result.reasons }
+    });
+    await onEvent({ type: 'final', data: result });
+    return;
+  }
+
+  await onEvent({
+    type: 'stepSucceeded',
+    stepId: 'step-1',
+    output: { message: '用户输入已解析' }
+  });
+  await onEvent({
+    type: 'stepSucceeded',
+    stepId: 'step-3',
+    output: {
+      message: '已查询用户本地日程',
+      calendarEventsResult: result.calendarEventsToolResult
+    }
+  });
+  await onEvent({
+    type: 'stepSucceeded',
+    stepId: 'step-4',
+    output: {
+      message: '已根据本地日程和用户偏好计算空闲时间',
+      freeWindowsResult: result.freeWindowsToolResult
+    }
+  });
+  await onEvent({
+    type: 'stepSucceeded',
+    stepId: 'step-5',
+    output: {
+      message: '已调用 Python 排期工具生成草稿方案',
+      scheduleToolResult: result.scheduleToolResult
+    }
+  });
+  await onEvent({
+    type: 'stepSucceeded',
+    stepId: 'step-6',
+    output: {
+      message: result.conflicts.length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突',
+      conflictCheckResult: result.conflictCheckResult
+    }
+  });
+  await onEvent({
+    type: 'stepSucceeded',
+    stepId: 'step-7',
+    output: {
+      runId: result.runId,
+      status: result.plans.length > 0 ? '等待用户选择方案' : '等待用户确认排期处理方式'
+    }
+  });
+  await onEvent({ type: 'final', data: result });
+}
+
 export const agentApi = {
+  async schedulePlanStream(
+    input: string,
+    clarificationJson: unknown,
+    onEvent: (event: AgentStreamEvent) => void | Promise<void>
+  ): Promise<SchedulePlanResult> {
+    if (!input.trim()) throw new Error('请输入排期目标');
+
+    const token = useAuthStore.getState().token;
+    if (!token) {
+      const refreshed = await useAuthStore.getState().refreshSession();
+      if (!refreshed) throw new Error('未登录或登录已过期');
+      return agentApi.schedulePlanStream(input, clarificationJson, onEvent);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}/agent/runs/stream`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: buildHeaders(
+          {
+            method: 'POST',
+            body: JSON.stringify({ input, clarificationJson })
+          },
+          token
+        ),
+        body: JSON.stringify({ input, clarificationJson })
+      });
+    } catch {
+      throw new Error('无法连接 Node 后端服务，请确认 node_calendar-bff 已启动');
+    }
+
+    if (!response.ok || !response.body) {
+      const rawText = await response.text().catch(() => '');
+      if (response.status === 404 && rawText.includes('Cannot POST')) {
+        const fallbackResult = await agentApi.schedulePlan(input, clarificationJson);
+        await replayNonStreamResult(fallbackResult, onEvent);
+        return fallbackResult;
+      }
+      throw new Error(rawText || `接口请求失败: HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult: SchedulePlanResult | null = null;
+
+    const dispatchBlock = async (block: string) => {
+      const lines = block.split(/\r?\n/);
+      const eventLine = lines.find((line) => line.startsWith('event:'));
+      const dataLines = lines.filter((line) => line.startsWith('data:'));
+      const eventName = eventLine?.slice('event:'.length).trim() || 'message';
+      const dataText = dataLines.map((line) => line.slice('data:'.length).trim()).join('\n');
+      if (!dataText || eventName === 'run:start' || eventName === 'done') return;
+
+      const payload = JSON.parse(dataText) as AgentStreamEvent;
+      if (eventName === 'error') {
+        const message = typeof (payload as { message?: unknown }).message === 'string' ? (payload as { message: string }).message : 'Agent stream failed';
+        await onEvent({ type: 'error', message });
+        throw new Error(message);
+      }
+
+      await onEvent(payload);
+      if (payload.type === 'final') {
+        finalResult = payload.data;
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+      let separatorIndex = buffer.search(/\r?\n\r?\n/);
+      while (separatorIndex >= 0) {
+        const block = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(buffer[separatorIndex] === '\r' ? separatorIndex + 4 : separatorIndex + 2);
+        if (block.trim()) await dispatchBlock(block);
+        separatorIndex = buffer.search(/\r?\n\r?\n/);
+      }
+
+      if (done) break;
+    }
+
+    if (buffer.trim()) await dispatchBlock(buffer);
+    if (!finalResult) throw new Error('Agent stream ended without final result');
+    return finalResult;
+  },
+
   async schedulePlan(input: string, clarificationJson?: unknown): Promise<SchedulePlanResult> {
     if (!input.trim()) throw new Error('请输入排期目标');
 
     const data = await request<{
-      status: 'needsUserInput' | 'waitingConfirm';
+      status: 'needsUserInput' | 'waitingConfirm' | 'commandResult' | 'llmAnswer';
       runId: string;
+      command?: 'clear' | 'compat';
+      answer?: string;
+      reason?: string;
+      summary?: string;
       rawInput?: string;
       userPreference?: AgentUserPreference;
       message?: string;
@@ -148,6 +343,26 @@ export const agentApi = {
       method: 'POST',
       body: JSON.stringify({ input, clarificationJson })
     });
+
+    if (data.status === 'commandResult') {
+      return {
+        status: 'commandResult',
+        runId: data.runId,
+        command: data.command ?? 'compat',
+        message: data.message || '命令已执行',
+        summary: data.summary
+      };
+    }
+
+    if (data.status === 'llmAnswer') {
+      return {
+        status: 'llmAnswer',
+        runId: data.runId,
+        rawInput: data.rawInput ?? input,
+        answer: data.answer ?? '',
+        reason: data.reason ?? ''
+      };
+    }
 
     if (data.status === 'needsUserInput') {
       return {

@@ -174,6 +174,15 @@ export interface SchedulePlanOption extends SchedulePlan {
   type?: 'generated' | 'custom';
   color?: string;
   accent?: string;
+  reason?: string;
+  warnings?: Array<{ type: string; message: string }>;
+  editableTextRegions?: Array<{
+    id: string;
+    planCardId: string;
+    path: string;
+    text: string;
+    kind: 'title' | 'summary' | 'reason' | 'block_title' | 'block_note';
+  }>;
 }
 
 export interface AgentConflict {

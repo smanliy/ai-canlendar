@@ -7,6 +7,7 @@ import type { AgentClarification, AgentConflict, AgentRunStatus, AgentRunStep, S
 interface AgentState {
   currentRunId: string | null;
   userInput: string;
+  submittedInput: string;
   revisionInput: string;
   runStatus: AgentRunStatus;
   steps: AgentRunStep[];
@@ -16,16 +17,19 @@ interface AgentState {
   conflicts: AgentConflict[];
   clarification: AgentClarification | null;
   clarificationInput: Record<string, string>;
+  directAnswer: string | null;
   confirmLoading: boolean;
   setUserInput: (value: string) => void;
+  setSubmittedInput: (value: string) => void;
   setRevisionInput: (value: string) => void;
   resetRun: () => void;
-  startRun: (runId: string) => void;
+  startRun: (runId: string, submittedInput: string) => void;
   setCurrentRunId: (runId: string) => void;
   updateStep: (stepId: string, status: AgentRunStep['status'], output?: unknown) => void;
   setPlan: (plan: SchedulePlan, conflicts: AgentConflict[]) => void;
   setPlanOptions: (plans: SchedulePlanOption[], conflicts: AgentConflict[]) => void;
   setClarification: (clarification: AgentClarification | null) => void;
+  setDirectAnswer: (answer: string | null) => void;
   setClarificationInput: (field: string, value: string) => void;
   clearClarification: () => void;
   selectPlan: (planId: string | null) => void;
@@ -37,6 +41,7 @@ export const useAgentStore = create<AgentState>()(
   immer((set) => ({
     currentRunId: null,
     userInput: '',
+    submittedInput: '',
     revisionInput: '',
     runStatus: 'idle',
     steps: createInitialSteps(),
@@ -46,10 +51,15 @@ export const useAgentStore = create<AgentState>()(
     conflicts: [],
     clarification: null,
     clarificationInput: {},
+    directAnswer: null,
     confirmLoading: false,
     setUserInput: (value) =>
       set((state) => {
         state.userInput = value;
+      }),
+    setSubmittedInput: (value) =>
+      set((state) => {
+        state.submittedInput = value;
       }),
     setRevisionInput: (value) =>
       set((state) => {
@@ -59,6 +69,8 @@ export const useAgentStore = create<AgentState>()(
       set((state) => {
         state.currentRunId = null;
         state.runStatus = 'idle';
+        state.userInput = '';
+        state.submittedInput = '';
         state.steps = createInitialSteps();
         state.plan = null;
         state.planOptions = [];
@@ -66,12 +78,15 @@ export const useAgentStore = create<AgentState>()(
         state.conflicts = [];
         state.clarification = null;
         state.clarificationInput = {};
+        state.directAnswer = null;
         state.confirmLoading = false;
         state.revisionInput = '';
       }),
-    startRun: (runId) =>
+    startRun: (runId, submittedInput) =>
       set((state) => {
         state.currentRunId = runId;
+        state.userInput = '';
+        state.submittedInput = submittedInput;
         state.runStatus = 'running';
         state.steps = createInitialSteps();
         state.plan = null;
@@ -80,6 +95,7 @@ export const useAgentStore = create<AgentState>()(
         state.conflicts = [];
         state.clarification = null;
         state.clarificationInput = {};
+        state.directAnswer = null;
       }),
     setCurrentRunId: (runId) =>
       set((state) => {
@@ -121,6 +137,10 @@ export const useAgentStore = create<AgentState>()(
           ? Object.fromEntries(Object.entries(clarification.clarificationJson).map(([field, value]) => [field, typeof value === 'string' ? value : '']))
           : {};
         state.runStatus = clarification ? 'needsUserInput' : state.runStatus;
+      }),
+    setDirectAnswer: (answer) =>
+      set((state) => {
+        state.directAnswer = answer;
       }),
     setClarificationInput: (field, value) =>
       set((state) => {

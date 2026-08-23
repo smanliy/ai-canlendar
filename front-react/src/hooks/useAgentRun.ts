@@ -1,27 +1,15 @@
 ﻿import { useCallback } from 'react';
 import { App as AntApp } from 'antd';
 
-import { agentApi } from '../services/agentApi';
+import { agentApi, type AgentStreamEvent, type SchedulePlanResult } from '../services/agentApi';
 import { eventApi } from '../services/eventApi';
 import { useAgentStore } from '../stores/agentStore';
-import type { CalendarEventsToolResult, ConflictCheckResult, FreeWindowsToolResult, SchedulePlanOption, ScheduleToolResult } from '../types/agent';
+import type { AgentRunStep, CalendarEventsToolResult, ConflictCheckResult, FreeWindowsToolResult, ScheduleToolResult } from '../types/agent';
 import type { EventPayload } from '../types/event';
 
-const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const TYPEWRITER_DELAY_MS = 28;
 
-function collectResearchSources(plans: SchedulePlanOption[]) {
-  const seen = new Set<string>();
-  return plans
-    .flatMap((plan) => plan.items)
-    .flatMap((item) => item.evidence ?? [])
-    .filter((source) => {
-      const key = `${source.query ?? ''}|${source.url ?? ''}|${source.title ?? ''}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return Boolean(source.query || source.url || source.title);
-    })
-    .slice(0, 8);
-}
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 function normalizeCalendarEventsResult(value: CalendarEventsToolResult | undefined) {
   return {
@@ -62,11 +50,90 @@ function normalizeConflictCheckResult(value: ConflictCheckResult | undefined) {
   };
 }
 
+function readOutputObject(output: unknown): Record<string, unknown> {
+  return output && typeof output === 'object' && !Array.isArray(output) ? (output as Record<string, unknown>) : {};
+}
+
+function readOutputMessage(output: unknown, fallback: string): string {
+  const value = readOutputObject(output).message;
+  return typeof value === 'string' && value.trim() ? value : fallback;
+}
+
+function withMessage(output: unknown, message: string) {
+  return {
+    ...readOutputObject(output),
+    message
+  };
+}
+
+async function typeStepOutput(
+  stepId: string,
+  status: AgentRunStep['status'],
+  output: unknown,
+  fallbackMessage: string,
+  updateStep: (stepId: string, status: AgentRunStep['status'], output?: unknown) => void
+) {
+  const fullMessage = readOutputMessage(output, fallbackMessage);
+  const baseOutput = readOutputObject(output);
+
+  updateStep(stepId, 'running', { message: '' });
+  for (let index = 1; index <= fullMessage.length; index += 1) {
+    updateStep(stepId, 'running', { message: fullMessage.slice(0, index) });
+    await sleep(TYPEWRITER_DELAY_MS);
+  }
+  updateStep(stepId, status, { ...baseOutput, message: fullMessage });
+}
+
+async function typeDirectAnswer(answer: string, setDirectAnswer: (answer: string | null) => void) {
+  setDirectAnswer('');
+  for (let index = 1; index <= answer.length; index += 1) {
+    setDirectAnswer(answer.slice(0, index));
+    await sleep(TYPEWRITER_DELAY_MS);
+  }
+}
+
+function applyFinalResult(result: SchedulePlanResult, prompt: string) {
+  const { setCurrentRunId, setPlanOptions, setRunStatus, setClarification, setSubmittedInput, clearClarification } = useAgentStore.getState();
+
+  if (result.status === 'needsUserInput') {
+    setCurrentRunId(result.runId);
+    setClarification({
+      message: result.message,
+      reasons: result.reasons,
+      clarificationJson: result.clarificationJson
+    });
+    setRunStatus('needsUserInput');
+    return;
+  }
+
+  if (result.status === 'waitingConfirm') {
+    setCurrentRunId(result.runId);
+    clearClarification();
+    setPlanOptions(result.plans, result.conflicts);
+    return;
+  }
+
+  if (result.status === 'llmAnswer') {
+    useAgentStore.getState().setCurrentRunId(result.runId);
+    setSubmittedInput(prompt);
+    useAgentStore.getState().setRunStatus('success');
+    return;
+  }
+
+  if (result.status === 'commandResult') {
+    if (result.command === 'clear') {
+      useAgentStore.getState().resetRun();
+      return;
+    }
+    useAgentStore.getState().setRunStatus('success');
+  }
+}
+
 export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
   const { message } = AntApp.useApp();
   const generatePlan = useCallback(
     async (overrideInput?: string) => {
-      const { userInput, clarification, clarificationInput, startRun, setCurrentRunId, updateStep, setPlanOptions, setRunStatus, setClarification, clearClarification } = useAgentStore.getState();
+      const { userInput, clarification, clarificationInput, startRun, updateStep, setRunStatus, setDirectAnswer } = useAgentStore.getState();
       const prompt = (overrideInput ?? userInput).trim();
       if (!prompt) {
         message.warning('请先输入排期目标');
@@ -76,73 +143,88 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
       const parsedClarification = clarification ? clarificationInput : undefined;
 
       const runId = `run-${Date.now()}`;
-      startRun(runId);
+      startRun(runId, prompt);
 
       try {
-        updateStep('step-1', 'running');
-        const result = await agentApi.schedulePlan(prompt, parsedClarification);
-        if (result.status === 'needsUserInput') {
-          setCurrentRunId(result.runId);
-          setClarification({
-            message: result.message,
-            reasons: result.reasons,
-            clarificationJson: result.clarificationJson
-          });
-          updateStep('step-1', 'failed', { message: result.message, reasons: result.reasons });
-          setRunStatus('needsUserInput');
+        let eventQueue = Promise.resolve();
+        let latestFinalResult: SchedulePlanResult | null = null;
+
+        const enqueue = (handler: () => Promise<void> | void) => {
+          eventQueue = eventQueue.then(handler);
+          return eventQueue;
+        };
+
+        const handleEvent = async (event: AgentStreamEvent) => {
+          const store = useAgentStore.getState();
+          if (event.type === 'stepStarted') {
+            store.updateStep(event.stepId, 'running', event.message ? { message: event.message } : undefined);
+            return;
+          }
+
+          if (event.type === 'stepSucceeded') {
+            await typeStepOutput(event.stepId, 'success', event.output, '当前步骤已完成', store.updateStep);
+            return;
+          }
+
+          if (event.type === 'stepFailed') {
+            await typeStepOutput(event.stepId, 'failed', event.output, '当前步骤需要补充信息或处理失败', store.updateStep);
+            return;
+          }
+
+          if (event.type === 'directAnswer') {
+            store.resetRun();
+            store.setSubmittedInput(prompt);
+            store.setRunStatus('running');
+            await typeDirectAnswer(event.answer, store.setDirectAnswer);
+            store.setRunStatus('success');
+            return;
+          }
+
+          if (event.type === 'commandResult') {
+            if (event.command === 'clear') {
+              store.resetRun();
+            } else {
+              store.resetRun();
+              store.setSubmittedInput(prompt);
+              store.setRunStatus('running');
+              await typeDirectAnswer(event.summary ? `${event.message}\n\n${event.summary}` : event.message, store.setDirectAnswer);
+              store.setRunStatus('success');
+            }
+            message.success(event.message);
+            return;
+          }
+
+          if (event.type === 'final') {
+            latestFinalResult = event.data;
+            applyFinalResult(event.data, prompt);
+            return;
+          }
+
+          if (event.type === 'error') {
+            throw new Error(event.message);
+          }
+        };
+
+        const result = await agentApi.schedulePlanStream(prompt, parsedClarification, (event) => enqueue(() => handleEvent(event)));
+        await eventQueue;
+        applyFinalResult(latestFinalResult ?? result, prompt);
+
+        const finalResult = latestFinalResult ?? result;
+        if (finalResult.status === 'needsUserInput') {
           message.warning('信息还不够明确，请补全 JSON 后再次发送');
           return;
         }
 
-        setCurrentRunId(result.runId);
-        updateStep('step-1', 'success', { message: '用户输入已解析' });
-        updateStep('step-2', 'success', {
-          message: '子任务拆解完成，已查询外部资料来源',
-          researchSources: collectResearchSources(result.plans)
-        });
-
-        updateStep('step-3', 'running');
-        await sleep(240);
-        updateStep('step-3', 'success', {
-          message: '已查询用户本地日程',
-          calendarEventsResult: normalizeCalendarEventsResult(result.calendarEventsToolResult)
-        });
-
-        updateStep('step-4', 'running');
-        await sleep(240);
-        updateStep('step-4', 'success', {
-          message: '已根据本地日程和用户偏好计算空闲时间',
-          freeWindowsResult: normalizeFreeWindowsResult(result.freeWindowsToolResult)
-        });
-
-        updateStep('step-5', 'running');
-        await sleep(240);
-        updateStep('step-5', 'success', {
-          message: '已调用 Python 排期工具生成草稿方案',
-          scheduleToolResult: normalizeScheduleResult(result.scheduleToolResult)
-        });
-
-        updateStep('step-6', 'running');
-        await sleep(240);
-        updateStep('step-6', 'success', {
-          message: result.conflicts.length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突',
-          conflictCheckResult: normalizeConflictCheckResult(result.conflictCheckResult)
-        });
-
-        clearClarification();
-        if (result.plans.length > 0) {
-          setPlanOptions(result.plans, result.conflicts);
-          updateStep('step-7', 'running');
-          updateStep('step-7', 'success', { runId: result.runId, status: '等待用户选择方案' });
-          message.success(`已生成 ${result.plans.length} 个排期方案`);
-        } else {
-          setPlanOptions([], result.conflicts);
-          updateStep('step-7', 'running');
-          updateStep('step-7', 'success', { runId: result.runId, status: '等待用户确认排期处理方式' });
-          message.info('当前排期需要先确认处理方式');
+        if (finalResult.status === 'waitingConfirm') {
+          if (finalResult.plans.length > 0) {
+            message.success(`已生成 ${finalResult.plans.length} 个排期方案`);
+          } else {
+            message.info('当前排期需要先确认处理方式');
+          }
         }
       } catch (err) {
-        useAgentStore.getState().updateStep('step-6', 'failed');
+        const failedStep = useAgentStore.getState().steps.find((step) => step.status === 'running')?.id ?? 'step-1';
+        useAgentStore.getState().updateStep(failedStep, 'failed', { message: err instanceof Error ? err.message : 'Agent 生成方案失败' });
         useAgentStore.getState().setRunStatus('failed');
         message.error(err instanceof Error ? err.message : 'Agent 生成方案失败');
       }
@@ -151,13 +233,13 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
   );
 
   const revisePlan = useCallback(async () => {
-    const { userInput, revisionInput, setUserInput, setRevisionInput } = useAgentStore.getState();
+    const { submittedInput, userInput, revisionInput, setRevisionInput } = useAgentStore.getState();
     if (!revisionInput.trim()) {
       message.warning('请先输入修改意见');
       return;
     }
-    const combinedInput = `${userInput}\n修改意见：${revisionInput}`;
-    setUserInput(combinedInput);
+    const baseInput = submittedInput || userInput;
+    const combinedInput = `${baseInput}\n修改意见：${revisionInput}`;
     setRevisionInput('');
     await generatePlan(combinedInput);
   }, [generatePlan, message]);
@@ -235,9 +317,9 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
       });
       await eventApi.bulkCreateEvents(payloads, currentRunId);
       updateStep('step-8', 'success', { created: payloads.length });
-      setRunStatus('success');
       message.success('已写入日历');
       await onEventsCreated();
+      useAgentStore.getState().resetRun();
     } catch (err) {
       updateStep('step-8', 'failed');
       setRunStatus('failed');
