@@ -29,7 +29,7 @@ export function AppLayout({
   onCreate
 }: AppLayoutProps) {
   return (
-    <div className="app-shell">
+    <div className={`app-shell app-page-${activePage}`}>
       <Sidebar activePage={activePage} onNavigate={onNavigate} />
       <section className="workspace-shell">
         <Topbar

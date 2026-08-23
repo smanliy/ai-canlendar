@@ -5,7 +5,6 @@ import { useAgentRun } from '../hooks/useAgentRun';
 import { useCalendarEvents } from '../hooks/useCalendarEvents';
 import { AppLayout } from '../layouts/AppLayout';
 import type { AppPageKey } from '../layouts/Sidebar';
-import type { CalendarEvent } from '../types/event';
 
 interface AgentWorkspacePageProps {
   activePage: AppPageKey;
@@ -15,10 +14,6 @@ interface AgentWorkspacePageProps {
 export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePageProps) {
   const { events, fetchEvents, createEvent, updateEvent, deleteEvent } = useCalendarEvents();
   const { generatePlan, confirmPlan, revisePlan, submitScheduleDecision, resetRun } = useAgentRun(fetchEvents);
-
-  const handleToggleDone = async (event: CalendarEvent, checked: boolean) => {
-    await updateEvent(event.id, { status: checked ? '已完成' : '未开始' });
-  };
 
   return (
     <AppLayout
@@ -32,11 +27,31 @@ export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePag
       onNext={() => undefined}
       onCreate={() => undefined}
     >
-      <main className="agent-workspace-main">
-        <div className="agent-chat-column">
-          <AgentChatPanel variant="primary" onGenerate={generatePlan} onConfirm={confirmPlan} onRevise={revisePlan} onReject={resetRun} onScheduleDecision={submitScheduleDecision} />
+      <main className="agent-workspace-main agent-planner-board">
+        <div className="workspace-paperclip" aria-hidden="true" />
+        <div className="workspace-sticker workspace-sticker-mint" aria-hidden="true">
+          checked
         </div>
-        <AgentContextPanel events={events} onToggleDone={handleToggleDone} onOpenCalendar={() => onNavigate('calendar')} />
+        <div className="workspace-sticker workspace-sticker-folder" aria-hidden="true">
+          draft
+        </div>
+        <section className="agent-planner-spread" aria-label="ChronoAgent 排期工作台">
+          <div className="planner-page planner-page-main">
+            <div className="planner-page-tab">agent trace</div>
+            <div className="agent-chat-column">
+              <AgentChatPanel variant="primary" onGenerate={generatePlan} onConfirm={confirmPlan} onRevise={revisePlan} onReject={resetRun} onScheduleDecision={submitScheduleDecision} />
+            </div>
+          </div>
+          <div className="planner-book-spine" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="planner-page planner-page-context">
+            <div className="planner-page-tab">today folder</div>
+            <AgentContextPanel events={events} />
+          </div>
+        </section>
       </main>
       <EventModal events={events} onCreate={createEvent} onUpdate={updateEvent} onDelete={deleteEvent} />
     </AppLayout>

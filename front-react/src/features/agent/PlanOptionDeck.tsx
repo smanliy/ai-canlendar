@@ -1,6 +1,6 @@
 import { GlobalOutlined } from '@ant-design/icons';
 import { Button, Tag, Typography } from 'antd';
-import { useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { type CSSProperties, type KeyboardEvent } from 'react';
 
 import type { SchedulePlanOption } from '../../types/agent';
 import './PlanOptionDeck.css';
@@ -18,9 +18,7 @@ interface PlanOptionDeckProps {
 interface PlanOptionCardProps {
   plan: SchedulePlanOption;
   index: number;
-  total: number;
   selected: boolean;
-  flipped: boolean;
   hasSelection: boolean;
   confirmLoading: boolean;
   onToggle: () => void;
@@ -37,9 +35,7 @@ function trimText(value: string | undefined, maxLength: number) {
 function PlanOptionCard({
   plan,
   index,
-  total,
   selected,
-  flipped,
   hasSelection,
   confirmLoading,
   onToggle,
@@ -47,14 +43,10 @@ function PlanOptionCard({
   onRevise,
   onReject
 }: PlanOptionCardProps) {
-  const cardOffset = index - (total - 1) / 2;
   const isCustomPlan = plan.type === 'custom';
-  const className = ['deal-plan-card', selected ? 'selected' : '', flipped ? 'flipped' : '', hasSelection && !selected ? 'muted' : ''].join(' ');
+  const className = ['deal-plan-card', selected ? 'selected' : '', hasSelection && !selected ? 'muted' : ''].join(' ');
 
-  // CSS Variables let the stylesheet fan out, color, and stack any number of cards without hardcoded selectors.
   const cardStyle = {
-    '--i': cardOffset,
-    '--card-z': index + 1,
     '--card-color': plan.color ?? '#2563EB',
     '--card-accent': plan.accent ?? '#0891B2'
   } as CSSProperties;
@@ -68,12 +60,8 @@ function PlanOptionCard({
   return (
     <div className={className} role="button" tabIndex={0} onClick={onToggle} onKeyDown={handleCardKeyDown} style={cardStyle}>
       <div className="deal-card-inner">
-        <div className="deal-card-face deal-card-back">
-          <span className="deal-card-number">{index + 1}</span>
-          <small>{isCustomPlan ? 'Custom' : 'Option'}</small>
-        </div>
         <div className="deal-card-face deal-card-front">
-          <div className="deal-card-kicker">Option {index + 1}</div>
+          <div className="deal-card-kicker">{isCustomPlan ? '调整便签' : `方案 ${index + 1}`}</div>
           <strong>{plan.name}</strong>
           <p>{plan.summary}</p>
           <div className="deal-card-meta">
@@ -133,19 +121,15 @@ function PlanOptionCard({
 }
 
 export function PlanOptionDeck({ plans, selectedPlanId, confirmLoading, onSelectPlan, onConfirm, onRevise, onReject }: PlanOptionDeckProps) {
-  const [flippedPlanId, setFlippedPlanId] = useState<string | null>(null);
   const hasSelection = Boolean(selectedPlanId);
 
   const handleTogglePlan = (planId: string) => {
-    // Clicking the opened card again resets the whole deck to the colored-number state.
-    const nextPlanId = flippedPlanId === planId ? null : planId;
+    const nextPlanId = selectedPlanId === planId ? null : planId;
     onSelectPlan(nextPlanId);
-    setFlippedPlanId(nextPlanId);
   };
 
   const handleReject = () => {
     onSelectPlan(null);
-    setFlippedPlanId(null);
     onReject();
   };
 
@@ -156,9 +140,7 @@ export function PlanOptionDeck({ plans, selectedPlanId, confirmLoading, onSelect
           key={plan.id}
           plan={plan}
           index={index}
-          total={plans.length}
           selected={selectedPlanId === plan.id}
-          flipped={flippedPlanId === plan.id}
           hasSelection={hasSelection}
           confirmLoading={confirmLoading}
           onToggle={() => handleTogglePlan(plan.id)}

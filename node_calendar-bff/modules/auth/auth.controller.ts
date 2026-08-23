@@ -89,6 +89,9 @@ function sendAuthResult(
 
 export async function sendCode(req: Request, res: Response): Promise<void> {
   try {
+    console.log(
+      `[Auth] send-code request scene=${String(req.body?.scene || '')} phone=${String(req.body?.phone || '')} origin=${String(req.headers.origin || '')}`
+    );
     const result = await authService.sendCode(req.body, getRequestMeta(req));
 
     res.json({
@@ -97,6 +100,7 @@ export async function sendCode(req: Request, res: Response): Promise<void> {
       data: result
     });
   } catch (error) {
+    console.warn(`[Auth] send-code failed: ${getErrorMessage(error, '验证码发送失败')}`);
     res.status(400).json({
       code: 400,
       message: getErrorMessage(error, '验证码发送失败'),

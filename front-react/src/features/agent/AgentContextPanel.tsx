@@ -1,17 +1,12 @@
-import { Button, Typography } from 'antd';
 import { useMemo } from 'react';
 
 import { TodayVineTimeline, type VineEvent } from '../../constructor/TodayVineTimeline';
-import { useAgentStore } from '../../stores/agentStore';
 import { useCalendarStore } from '../../stores/calendarStore';
 import type { CalendarEvent } from '../../types/event';
 import { isSameDay } from '../../utils/date';
-import { TodayAgenda } from '../calendar/TodayAgenda';
 
 interface AgentContextPanelProps {
   events: CalendarEvent[];
-  onToggleDone: (event: CalendarEvent, checked: boolean) => Promise<void>;
-  onOpenCalendar: () => void;
 }
 
 function toTimestamp(value: string) {
@@ -57,25 +52,14 @@ function mapToVineEvents(events: CalendarEvent[], currentDate: string): VineEven
   }));
 }
 
-export function AgentContextPanel({ events, onToggleDone, onOpenCalendar }: AgentContextPanelProps) {
-  const conflicts = useAgentStore((state) => state.conflicts);
+export function AgentContextPanel({ events }: AgentContextPanelProps) {
   const currentDate = useCalendarStore((state) => state.currentDate);
 
   const vineEvents = useMemo(() => mapToVineEvents(events, currentDate), [currentDate, events]);
 
   return (
     <aside className="agent-context-panel">
-      <TodayAgenda events={events} onToggleDone={onToggleDone} />
-
       <TodayVineTimeline events={vineEvents} />
-
-      {conflicts.length > 0 ? (
-        <Typography.Text type="secondary">Agent 发现 {conflicts.length} 条排期冲突建议</Typography.Text>
-      ) : null}
-
-      <Button className="context-calendar-button" onClick={onOpenCalendar}>
-        查看完整日历
-      </Button>
 
       {/* <section className="panel-block context-block">
         <div className="panel-title-row">

@@ -260,6 +260,29 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
           <p>告诉我你的目标、截止时间、花费时间和偏好。我会在拆解子任务时判断信息是否足够。</p>
         </div>
 
+        {runStatus === 'idle' && !userInput ? (
+          <div className="agent-empty-scene" aria-hidden="true">
+            <div className="agent-scene-note note-a">focus</div>
+            <div className="agent-scene-note note-b">plan</div>
+            <div className="agent-scene-person">
+              <span className="agent-scene-head" />
+              <span className="agent-scene-body" />
+              <span className="agent-scene-arm arm-left" />
+              <span className="agent-scene-arm arm-right" />
+            </div>
+            <div className="agent-scene-desk">
+              <span className="agent-scene-laptop" />
+              <span className="agent-scene-paper" />
+              <span className="agent-scene-pencil" />
+            </div>
+            <div className="agent-scene-timebar">
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
+        ) : null}
+
         {userInput ? (
           <div className="chat-message user">
             <strong>你</strong>
@@ -472,7 +495,7 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
           placeholder="例如：下周五前完成开题报告，花费 10 小时，每天晚上 7 点后安排"
           disabled={loading}
         />
-        <Button type="primary" icon={<SendOutlined />} loading={loading} onClick={() => void onGenerate()}>
+        <Button className="agent-send-button" type="primary" icon={<SendOutlined />} loading={loading} onClick={() => void onGenerate()}>
           {loading ? 'Agent 正在工作...' : clarification ? '提交补充信息' : '发送'}
         </Button>
       </div>
