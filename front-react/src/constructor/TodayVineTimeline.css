@@ -1,10 +1,14 @@
 .today-vine-card {
   width: 100%;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 16px;
+  border: 1px solid rgba(83, 102, 78, 0.18);
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, rgba(143, 207, 178, 0.09) 0 1px, transparent 1px 100%),
+    linear-gradient(180deg, #fffdf6 0%, #fbf6e9 100%);
+  background-size: 28px 28px, auto;
+  padding: 14px;
   overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
 }
 
 .today-vine-header {
@@ -17,47 +21,42 @@
 
 .today-vine-header h3 {
   margin: 0;
-  color: #111827;
-  font-size: 16px;
-  font-weight: 700;
+  color: #26312b;
+  font-size: 15px;
+  font-weight: 650;
 }
 
 .today-vine-header p {
   margin: 4px 0 0;
-  color: #6b7280;
+  color: #6e756d;
   font-size: 12px;
 }
 
 .today-vine-header span {
   min-width: 44px;
   border-radius: 999px;
-  background: #ecfdf5;
-  color: #166534;
+  background: #f2c96d;
+  color: #4d3b16;
   font-size: 12px;
   font-weight: 700;
   text-align: center;
-  padding: 4px 8px;
+  padding: 4px 9px;
+  box-shadow: 0 2px 0 rgba(77, 59, 22, 0.14);
 }
 
 .today-vine-svg {
   display: block;
   width: 100%;
-  height: min(650px, 80vh);
-  min-height: 650px;
-}
-
-.vine-main-base {
-  fill: none;
-  stroke: rgba(71, 140, 66, 0.18);
-  stroke-width: 4.5;
-  stroke-linecap: round;
+  height: min(650px, 66vh);
+  min-height: 590px;
 }
 
 .vine-main {
   fill: none;
-  stroke: #478c42;
-  stroke-width: 3;
+  stroke: rgba(78, 130, 69, 0.72);
+  stroke-width: 2.5;
   stroke-linecap: round;
+  stroke-linejoin: round;
   stroke-dasharray: 620;
   stroke-dashoffset: 620;
   animation: vineGrow 1000ms ease-out forwards;
@@ -66,21 +65,53 @@
 .vine-branch {
   fill: none;
   stroke: var(--vine-color);
-  stroke-width: 2.8;
+  stroke-width: 2.35;
   stroke-linecap: round;
-  stroke-dasharray: 240;
-  stroke-dashoffset: 240;
-  animation: vineGrow 720ms ease-out forwards;
+  stroke-linejoin: round;
+  stroke-dasharray: 280;
+  stroke-dashoffset: 280;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.72));
+  animation: vineGrow 820ms cubic-bezier(0.2, 0.8, 0.22, 1) forwards;
   animation-delay: var(--delay);
 }
 
+.vine-event-right .vine-branch {
+  stroke-width: 2.2;
+}
+
+.vine-leaf-shell {
+  opacity: 0;
+  transform:
+    translate(calc(var(--leaf-x) * 1px), calc(var(--leaf-y) * 1px))
+    rotate(var(--leaf-rotate))
+    scale(var(--leaf-scale))
+    scaleX(var(--leaf-mirror));
+  animation:
+    leafPop 260ms ease-out forwards;
+  animation-delay: var(--leaf-delay);
+}
+
 .vine-leaf {
+  fill: color-mix(in srgb, var(--vine-color) 88%, #fffdf6);
+  transform-box: fill-box;
+  transform-origin: 2px 0;
+  animation: leafSway 2900ms ease-in-out infinite;
+  animation-delay: calc(var(--leaf-delay) + 260ms);
+}
+
+.vine-leaf-vein {
+  fill: none;
+  stroke: rgba(255, 253, 246, 0.58);
+  stroke-linecap: round;
+  stroke-width: 0.8;
+  pointer-events: none;
+}
+
+.vine-tip {
   fill: var(--vine-color);
   opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: leafPop 260ms ease-out forwards;
-  animation-delay: var(--leaf-delay);
+  animation: tipPop 180ms ease-out forwards;
+  animation-delay: var(--tip-delay);
 }
 
 .vine-label {
@@ -91,18 +122,31 @@
 }
 
 .vine-label-box {
-  max-width: 120px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-  padding: 6px 8px;
+  max-width: 126px;
+  border: 1px solid rgba(98, 116, 91, 0.22);
+  border-radius: 5px;
+  background: rgba(255, 253, 246, 0.94);
+  box-shadow: 0 5px 12px rgba(82, 61, 29, 0.08);
+  padding: 5px 7px;
   font-family: inherit;
+  position: relative;
+}
+
+.vine-label-box::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 9px;
+  width: 22px;
+  height: 6px;
+  border-radius: 2px;
+  background: rgba(242, 201, 109, 0.62);
+  transform: rotate(-3deg);
 }
 
 .vine-label-box strong {
   display: block;
-  color: #111827;
+  color: #24322b;
   font-size: 11px;
   line-height: 1.25;
   white-space: nowrap;
@@ -113,13 +157,14 @@
 .vine-label-box span {
   display: block;
   margin-top: 3px;
-  color: #64748b;
+  color: #7a735f;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 10px;
 }
 
 .today-vine-more {
   margin-top: 8px;
-  color: #64748b;
+  color: #6e756d;
   font-size: 12px;
   text-align: center;
 }
@@ -133,12 +178,45 @@
 @keyframes leafPop {
   from {
     opacity: 0;
-    transform: scale(0.4);
+    transform:
+      translate(calc(var(--leaf-x) * 1px), calc(var(--leaf-y) * 1px))
+      rotate(calc(var(--leaf-rotate) - 10deg))
+      scale(0.35)
+      scaleX(var(--leaf-mirror));
   }
 
   to {
     opacity: 1;
+    transform:
+      translate(calc(var(--leaf-x) * 1px), calc(var(--leaf-y) * 1px))
+      rotate(var(--leaf-rotate))
+      scale(var(--leaf-scale))
+      scaleX(var(--leaf-mirror));
+  }
+}
+
+@keyframes leafSway {
+  0%,
+  100% {
+    transform: rotate(-1.5deg);
+  }
+
+  50% {
+    transform: rotate(4deg);
+  }
+}
+
+@keyframes tipPop {
+  from {
+    opacity: 0;
+    transform: scale(0.2);
+    transform-origin: center;
+  }
+
+  to {
+    opacity: 0.9;
     transform: scale(1);
+    transform-origin: center;
   }
 }
 

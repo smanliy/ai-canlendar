@@ -4431,8 +4431,8 @@ body {
 }
 
 .agent-planner-board .today-vine-svg {
-  height: min(400px, 48vh);
-  min-height: 360px;
+  height: min(650px, 66vh);
+  min-height: 590px;
 }
 
 .context-conflict-note {

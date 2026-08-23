@@ -23,11 +23,11 @@ interface TodayVineTimelineProps {
 }
 
 interface VineLeaf {
-  cx: number;
-  cy: number;
-  rx: number;
-  ry: number;
-  transform?: string;
+  x: number;
+  y: number;
+  rotate: number;
+  scale: number;
+  mirror?: boolean;
 }
 
 interface VineRenderItem {
@@ -47,12 +47,7 @@ interface VineRenderItem {
 
 const SVG_WIDTH = 400;
 const SVG_HEIGHT = 650;
-const STEM_X = 200;
-const TOP_Y = 30;
-const BOTTOM_Y = 650;
 const MAX_VISIBLE_EVENTS = 10;
-const TEMPLATE_COUNT = 6;
-const CYCLE_SHIFT_Y = 42;
 
 const statusColor: Record<VineEventStatus, string> = {
   normal: '#50994a',
@@ -64,6 +59,7 @@ const statusColor: Record<VineEventStatus, string> = {
 interface VineTemplate {
   side: 'left' | 'right';
   startY: number;
+  endY: number;
   path: string;
   leaves: VineLeaf[];
   labelX: number;
@@ -73,88 +69,151 @@ interface VineTemplate {
 const VINE_TEMPLATES: VineTemplate[] = [
   {
     side: 'left',
-    startY: 40,
-    path: 'M 200 40 c -85 60, -35 130, -65 200 s -50 90, -45 145',
+    startY: 56,
+    endY: 110,
+    path: 'M 200 56 C 174 48, 157 67, 143 84 C 126 106, 103 111, 72 104',
     leaves: [
-      { cx: 146, cy: 78, rx: 8, ry: 4.5, transform: 'translate(-2.142852783203125, 25.00000762939453)' },
-      {
-        cx: 122,
-        cy: 136,
-        rx: 8,
-        ry: 4.5,
-        transform: 'translate(46.68784750830963, 32.77599936628117) scale(0.750752827608432)'
-      },
-      { cx: 110, cy: 202, rx: 8, ry: 4.5 },
-      { cx: 126, cy: 274, rx: 8, ry: 4.5 }
+      { x: 170, y: 60, rotate: -154, scale: 0.72, mirror: true },
+      { x: 139, y: 88, rotate: -22, scale: 0.62 },
+      { x: 106, y: 107, rotate: -168, scale: 0.52, mirror: true }
     ],
-    labelX: 38,
-    labelY: 168
+    labelX: 18,
+    labelY: 26
+  },
+  {
+    side: 'right',
+    startY: 112,
+    endY: 166,
+    path: 'M 200 112 C 228 106, 244 126, 256 145 C 270 168, 298 172, 332 154',
+    leaves: [
+      { x: 231, y: 117, rotate: 18, scale: 0.68 },
+      { x: 258, y: 148, rotate: 154, scale: 0.58, mirror: true },
+      { x: 299, y: 163, rotate: -10, scale: 0.5 }
+    ],
+    labelX: 252,
+    labelY: 84
   },
   {
     side: 'left',
-    startY: 110,
-    path: 'M 200 110 c -85 60, -35 130, -35 200 s -35 90, -35 185',
+    startY: 174,
+    endY: 224,
+    path: 'M 200 174 C 178 178, 164 190, 151 205 C 130 230, 103 224, 63 235',
     leaves: [
-      { cx: 154, cy: 126, rx: 8, ry: 4.5 },
-      { cx: 133, cy: 188, rx: 8, ry: 4.5 },
-      { cx: 136, cy: 260, rx: 8, ry: 4.5 },
-      { cx: 142, cy: 330, rx: 8, ry: 4.5 }
+      { x: 171, y: 187, rotate: -144, scale: 0.6, mirror: true },
+      { x: 147, y: 211, rotate: -18, scale: 0.72 },
+      { x: 104, y: 226, rotate: -165, scale: 0.5, mirror: true },
+      { x: 78, y: 235, rotate: 8, scale: 0.44 }
     ],
-    labelX: 38,
-    labelY: 246
+    labelX: 18,
+    labelY: 146
+  },
+  {
+    side: 'right',
+    startY: 232,
+    endY: 287,
+    path: 'M 200 232 C 222 239, 231 259, 253 264 C 282 270, 294 306, 337 289',
+    leaves: [
+      { x: 222, y: 241, rotate: 28, scale: 0.52 },
+      { x: 254, y: 263, rotate: 164, scale: 0.66, mirror: true },
+      { x: 293, y: 292, rotate: 22, scale: 0.54 },
+      { x: 320, y: 294, rotate: -18, scale: 0.46 }
+    ],
+    labelX: 252,
+    labelY: 206
   },
   {
     side: 'left',
-    startY: 220,
-    path: 'M 200 220 c -85 60, -35 130, -35 200 s -35 90, -35 185',
+    startY: 294,
+    endY: 347,
+    path: 'M 200 294 C 167 292, 155 306, 139 324 C 118 348, 90 345, 58 361',
     leaves: [
-      { cx: 152, cy: 258, rx: 8, ry: 4.5 },
-      { cx: 131, cy: 320, rx: 8, ry: 4.5 },
-      { cx: 135, cy: 392, rx: 8, ry: 4.5 },
-      { cx: 141, cy: 460, rx: 8, ry: 4.5 }
+      { x: 166, y: 301, rotate: -156, scale: 0.7, mirror: true },
+      { x: 139, y: 326, rotate: -24, scale: 0.58 },
+      { x: 101, y: 348, rotate: -172, scale: 0.62, mirror: true }
     ],
-    labelX: 38,
-    labelY: 336
+    labelX: 18,
+    labelY: 266
   },
   {
     side: 'right',
-    startY: 50,
-    path: 'M 200 50 c 62 55, 40 125, 70 165 s -2 100, 2 150',
+    startY: 352,
+    endY: 403,
+    path: 'M 200 352 C 234 344, 242 366, 260 382 C 279 399, 309 398, 343 415',
     leaves: [
-      { cx: 252, cy: 84, rx: 8, ry: 4.5, transform: 'translate(-17.142852783203125, -3.5714263916015625)' },
-      { cx: 268, cy: 142, rx: 8, ry: 4.5, transform: 'translate(-10.714263916015625, 0)' },
-      { cx: 274, cy: 216, rx: 8, ry: 4.5, transform: 'translate(4.285675048828125, 0)' },
-      { cx: 270, cy: 286, rx: 8, ry: 4.5, transform: 'translate(2.857147216796875, -3.5714111328125)' }
+      { x: 232, y: 354, rotate: 16, scale: 0.7 },
+      { x: 261, y: 383, rotate: 158, scale: 0.56, mirror: true },
+      { x: 303, y: 400, rotate: 14, scale: 0.5 }
     ],
-    labelX: 238,
-    labelY: 154
+    labelX: 252,
+    labelY: 326
+  },
+  {
+    side: 'left',
+    startY: 414,
+    endY: 468,
+    path: 'M 200 414 C 181 420, 164 429, 151 447 C 133 471, 104 482, 67 469',
+    leaves: [
+      { x: 173, y: 424, rotate: -148, scale: 0.56, mirror: true },
+      { x: 151, y: 448, rotate: -12, scale: 0.64 },
+      { x: 116, y: 476, rotate: -166, scale: 0.48, mirror: true },
+      { x: 82, y: 471, rotate: 6, scale: 0.42 }
+    ],
+    labelX: 18,
+    labelY: 386
   },
   {
     side: 'right',
-    startY: 60,
-    path: 'M 200 60 c 20 65, 30 125, 32 190 s -5 85, 68 195',
+    startY: 475,
+    endY: 526,
+    path: 'M 200 475 C 222 466, 246 485, 257 505 C 272 531, 304 539, 334 520',
     leaves: [
-      { cx: 234, cy: 96, rx: 8, ry: 4.5, transform: 'rotate(20 146 78)' },
-      { cx: 250, cy: 156, rx: 8, ry: 4.5, transform: 'translate(-2.142852783203125, 25.000015258789062)' },
-      { cx: 262, cy: 228, rx: 8, ry: 4.5, transform: 'translate(-2.857147216796875, -19.28570556640625)' },
-      { cx: 278, cy: 308, rx: 8, ry: 4.5, transform: 'translate(4.28570556640625, 0)' }
+      { x: 229, y: 478, rotate: 8, scale: 0.52 },
+      { x: 258, y: 506, rotate: 160, scale: 0.68, mirror: true },
+      { x: 300, y: 532, rotate: 18, scale: 0.54 },
+      { x: 323, y: 522, rotate: -16, scale: 0.42 }
     ],
-    labelX: 238,
-    labelY: 176
+    labelX: 252,
+    labelY: 448
+  },
+  {
+    side: 'left',
+    startY: 535,
+    endY: 586,
+    path: 'M 200 535 C 170 531, 163 553, 142 566 C 119 580, 91 574, 60 594',
+    leaves: [
+      { x: 169, y: 541, rotate: -152, scale: 0.62, mirror: true },
+      { x: 142, y: 567, rotate: -18, scale: 0.7 },
+      { x: 101, y: 578, rotate: -164, scale: 0.46, mirror: true }
+    ],
+    labelX: 18,
+    labelY: 508
   },
   {
     side: 'right',
-    startY: 180,
-    path: 'M 200 180 c 20 65, 30 125, 22 190 s 5 85, 38 175',
+    startY: 594,
+    endY: 630,
+    path: 'M 200 594 C 224 591, 239 607, 259 619 C 281 632, 310 629, 339 617',
     leaves: [
-      { cx: 232, cy: 214, rx: 8, ry: 4.5 },
-      { cx: 246, cy: 276, rx: 8, ry: 4.5 },
-      { cx: 254, cy: 348, rx: 8, ry: 4.5 },
-      { cx: 266, cy: 418, rx: 8, ry: 4.5 }
+      { x: 227, y: 600, rotate: 18, scale: 0.56 },
+      { x: 260, y: 620, rotate: 154, scale: 0.62, mirror: true },
+      { x: 305, y: 626, rotate: -2, scale: 0.48 }
     ],
-    labelX: 238,
-    labelY: 304
+    labelX: 252,
+    labelY: 566
   }
+];
+
+const DEMO_EVENTS: VineEvent[] = [
+  { id: 'demo-vine-1', title: '晨间复盘', startTime: '2026-08-23T08:30:00+08:00', endTime: '2026-08-23T09:00:00+08:00' },
+  { id: 'demo-vine-2', title: 'TS 类型系统', startTime: '2026-08-23T09:20:00+08:00', endTime: '2026-08-23T10:10:00+08:00' },
+  { id: 'demo-vine-3', title: '刷面试题', startTime: '2026-08-23T10:30:00+08:00', endTime: '2026-08-23T11:20:00+08:00' },
+  { id: 'demo-vine-4', title: '整理错题', startTime: '2026-08-23T11:30:00+08:00', endTime: '2026-08-23T12:00:00+08:00' },
+  { id: 'demo-vine-5', title: '项目源码阅读', startTime: '2026-08-23T14:00:00+08:00', endTime: '2026-08-23T14:50:00+08:00' },
+  { id: 'demo-vine-6', title: '组件设计练习', startTime: '2026-08-23T15:10:00+08:00', endTime: '2026-08-23T16:00:00+08:00' },
+  { id: 'demo-vine-7', title: '接口字段梳理', startTime: '2026-08-23T16:20:00+08:00', endTime: '2026-08-23T16:50:00+08:00' },
+  { id: 'demo-vine-8', title: '晚间黄金时间', startTime: '2026-08-23T19:00:00+08:00', endTime: '2026-08-23T20:00:00+08:00' },
+  { id: 'demo-vine-9', title: '模拟面试', startTime: '2026-08-23T20:20:00+08:00', endTime: '2026-08-23T21:10:00+08:00' },
+  { id: 'demo-vine-10', title: '明日计划', startTime: '2026-08-23T21:30:00+08:00', endTime: '2026-08-23T22:00:00+08:00' }
 ];
 
 function isValidEvent(event: VineEvent) {
@@ -183,9 +242,7 @@ function buildVines(events: VineEvent[], maxEvents: number): VineRenderItem[] {
   const visibleEvents = sortEvents(events).slice(0, maxEvents);
 
   return visibleEvents.map((event, index) => {
-    const template = VINE_TEMPLATES[index % TEMPLATE_COUNT];
-    const cycle = Math.floor(index / TEMPLATE_COUNT);
-    const groupShift = cycle * CYCLE_SHIFT_Y;
+    const template = VINE_TEMPLATES[index % VINE_TEMPLATES.length];
     const status = event.status ?? 'normal';
 
     return {
@@ -193,23 +250,44 @@ function buildVines(events: VineEvent[], maxEvents: number): VineRenderItem[] {
       event,
       index,
       side: template.side,
-      startY: template.startY + groupShift,
-      endY: template.startY + groupShift + 200,
+      startY: template.startY,
+      endY: template.endY,
       path: template.path,
       labelX: template.labelX,
-      labelY: template.labelY + groupShift,
+      labelY: template.labelY,
       color: statusColor[status],
       leaves: template.leaves,
-      groupShift
+      groupShift: 0
     };
   });
 }
 
+function getPathEndPoint(path: string) {
+  const numbers = path.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+
+  return {
+    x: numbers[numbers.length - 2] ?? 200,
+    y: numbers[numbers.length - 1] ?? 30
+  };
+}
+
+function fillTimelineEvents(events: VineEvent[], maxEvents: number) {
+  const sortedEvents = sortEvents(events).slice(0, maxEvents);
+  if (sortedEvents.length >= maxEvents) {
+    return sortedEvents;
+  }
+
+  const usedIds = new Set(sortedEvents.map((event) => event.id));
+  const fillers = DEMO_EVENTS.filter((event) => !usedIds.has(event.id)).slice(0, maxEvents - sortedEvents.length);
+  return [...sortedEvents, ...fillers];
+}
+
 export function TodayVineTimeline({ events, maxEvents = MAX_VISIBLE_EVENTS, className = '' }: TodayVineTimelineProps) {
   const sanitizedEvents = useMemo(() => events.filter(isValidEvent), [events]);
-  const visibleEvents = useMemo(() => sortEvents(sanitizedEvents).slice(0, maxEvents), [sanitizedEvents, maxEvents]);
-  const vines = useMemo(() => buildVines(sanitizedEvents, maxEvents), [sanitizedEvents, maxEvents]);
-  const hiddenCount = Math.max(sanitizedEvents.length - visibleEvents.length, 0);
+  const timelineEvents = useMemo(() => fillTimelineEvents(sanitizedEvents, maxEvents), [sanitizedEvents, maxEvents]);
+  const visibleEvents = useMemo(() => sortEvents(timelineEvents).slice(0, maxEvents), [timelineEvents, maxEvents]);
+  const vines = useMemo(() => buildVines(timelineEvents, maxEvents), [timelineEvents, maxEvents]);
+  const hiddenCount = Math.max(timelineEvents.length - visibleEvents.length, 0);
 
   const { mainVineRef, vineList } = useVineGrowProgress(vines);
 
@@ -221,54 +299,78 @@ export function TodayVineTimeline({ events, maxEvents = MAX_VISIBLE_EVENTS, clas
           <p>藤条按事件顺序生长，冲突事件会高亮显示。</p>
         </div>
         <span>
-          {visibleEvents.length}/{sanitizedEvents.length}
+          {visibleEvents.length}/{timelineEvents.length}
         </span>
       </div>
 
       <svg className="today-vine-svg" width={SVG_WIDTH} height={SVG_HEIGHT} viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} role="img">
         <title>今日安排藤条时间线</title>
 
-        <path className="vine-main-base" d="M 200 30 V 650" />
-        <path ref={mainVineRef} className="vine-main" d="M 200 30 V 650" />
+        <path ref={mainVineRef} className="vine-main" d="M 202 30 C 196 128, 207 210, 200 306 C 194 404, 207 510, 198 626" />
 
         {vineList.map((item) => {
           if (!item.activated) {
             return null;
           }
 
+          const tipPoint = getPathEndPoint(item.path);
+
           return (
-            <g key={item.event.id} transform={`translate(0 ${item.groupShift})`} className={`vine-event vine-event-${item.side}`}>
+            <g key={item.event.id} className={`vine-event vine-event-${item.side}`}>
               <path
                 className="vine-branch"
                 d={item.path}
                 style={
                   {
                     '--vine-color': item.color,
-                    '--delay': '0ms'
+                    '--delay': `${item.index * 35}ms`
                   } as CSSProperties
                 }
               />
 
               {item.leaves.map((leaf, leafIndex) => (
-                <ellipse
+                <g
                   key={`${item.event.id}-leaf-${leafIndex}`}
-                  className="vine-leaf"
-                  cx={leaf.cx}
-                  cy={leaf.cy}
-                  rx={leaf.rx}
-                  ry={leaf.ry}
-                  transform={leaf.transform}
+                  className="vine-leaf-shell"
                   style={
                     {
                       '--vine-color': item.color,
-                      '--leaf-delay': `${180 + leafIndex * 70}ms`
+                      '--leaf-delay': `${180 + item.index * 45 + leafIndex * 70}ms`,
+                      '--leaf-x': leaf.x,
+                      '--leaf-y': leaf.y,
+                      '--leaf-rotate': `${leaf.rotate}deg`,
+                      '--leaf-scale': leaf.scale,
+                      '--leaf-mirror': leaf.mirror ? -1 : 1
                     } as CSSProperties
                   }
-                />
+                >
+                  <path className="vine-leaf" d="M 0 0 C 7 -8, 17 -8, 22 0 C 15 7, 6 6, 0 0 Z" />
+                  <path className="vine-leaf-vein" d="M 3 0 C 8 -1, 14 -1, 19 0" />
+                </g>
               ))}
 
-              <foreignObject x={item.labelX} y={item.labelY} width="124" height="54" className="vine-label">
-                <div className="vine-label-box">
+              <circle
+                className="vine-tip"
+                cx={tipPoint.x}
+                cy={tipPoint.y}
+                r="2.2"
+                style={
+                  {
+                    '--vine-color': item.color,
+                    '--tip-delay': `${320 + item.index * 50}ms`
+                  } as CSSProperties
+                }
+              />
+
+              <foreignObject x={item.labelX} y={item.labelY} width="130" height="48" className="vine-label">
+                <div
+                  className="vine-label-box"
+                  style={
+                    {
+                      '--label-delay': `${260 + item.index * 55}ms`
+                    } as CSSProperties
+                  }
+                >
                   <strong>{item.event.title}</strong>
                   <span>{formatTimeRange(item.event)}</span>
                 </div>
@@ -278,7 +380,7 @@ export function TodayVineTimeline({ events, maxEvents = MAX_VISIBLE_EVENTS, clas
         })}
       </svg>
 
-      {sanitizedEvents.length === 0 ? <div className="today-vine-more">今天还没有安排</div> : null}
+      {sanitizedEvents.length < maxEvents ? <div className="today-vine-more">已补足示例藤条用于视觉预览</div> : null}
       {hiddenCount > 0 ? <div className="today-vine-more">还有 {hiddenCount} 个事件未展示</div> : null}
     </section>
   );
