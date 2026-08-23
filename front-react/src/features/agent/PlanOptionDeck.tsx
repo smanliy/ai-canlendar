@@ -150,7 +150,7 @@ export function PlanOptionDeck({ plans, selectedPlanId, confirmLoading, onSelect
   };
 
   return (
-    <div className={`deal-plan-stage ${hasSelection ? 'has-selection' : ''}`}>
+    <div className={`deal-plan-stage count-${plans.length} ${hasSelection ? 'has-selection' : ''}`}>
       {plans.map((plan, index) => (
         <PlanOptionCard
           key={plan.id}

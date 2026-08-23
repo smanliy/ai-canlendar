@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 
 import { useAuthStore } from '../stores/authStore';
-import type { AgentRunDetail, AgentRunStep, AgentRunStatus, AgentUserPreference, CalendarEventsToolResult, FreeWindowsToolResult, SchedulePlan, SchedulePlanOption, ScheduleToolResult, SplitResult } from '../types/agent';
+import type { AgentRunDetail, AgentRunStep, AgentRunStatus, AgentUserPreference, CalendarEventsToolResult, ConflictCheckResult, FreeWindowsToolResult, SchedulePlan, SchedulePlanOption, ScheduleToolResult, SplitResult } from '../types/agent';
 
 interface ApiResponse<T> {
   code: number;
@@ -22,11 +22,12 @@ export type SchedulePlanResult =
       status: 'waitingConfirm';
       runId: string;
       plans: SchedulePlanOption[];
-      plan: SchedulePlan;
+      plan?: SchedulePlan;
       conflicts: { id: string; message: string }[];
       calendarEventsToolResult?: CalendarEventsToolResult;
       freeWindowsToolResult?: FreeWindowsToolResult;
       scheduleToolResult?: ScheduleToolResult;
+      conflictCheckResult?: ConflictCheckResult;
     };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
@@ -142,6 +143,7 @@ export const agentApi = {
       calendarEventsToolResult?: CalendarEventsToolResult;
       freeWindowsToolResult?: FreeWindowsToolResult;
       scheduleToolResult?: ScheduleToolResult;
+      conflictCheckResult?: ConflictCheckResult;
     }>('/agent/runs', {
       method: 'POST',
       body: JSON.stringify({ input, clarificationJson })
@@ -158,7 +160,7 @@ export const agentApi = {
       };
     }
 
-    if (!data.plans || !data.plan || !data.conflicts) {
+    if (!data.plans || !data.conflicts) {
       throw new Error('后端没有返回排期方案');
     }
 
@@ -170,7 +172,8 @@ export const agentApi = {
       conflicts: data.conflicts,
       calendarEventsToolResult: data.calendarEventsToolResult,
       freeWindowsToolResult: data.freeWindowsToolResult,
-      scheduleToolResult: data.scheduleToolResult
+      scheduleToolResult: data.scheduleToolResult,
+      conflictCheckResult: data.conflictCheckResult
     };
   },
 
@@ -183,9 +186,10 @@ export const agentApi = {
     status: 'waitingConfirm';
     runId: string;
     plans: SchedulePlanOption[];
-    plan: SchedulePlan;
+    plan?: SchedulePlan;
     conflicts: { id: string; message: string }[];
     scheduleToolResult?: ScheduleToolResult;
+    conflictCheckResult?: ConflictCheckResult;
     splitResult?: SplitResult;
   }> {
     if (!runId) throw new Error('缺少 RunId');

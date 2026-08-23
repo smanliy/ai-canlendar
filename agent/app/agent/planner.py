@@ -5,7 +5,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .tools import calculate_free_windows, calendar_events_query, research_task_duration, schedule_tasks, web_search_tool
+from .tools import calculate_free_windows, calendar_events_query, check_schedule_conflicts, research_task_duration, schedule_tasks, web_search_tool
 
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -942,6 +942,27 @@ def _attach_excluded_availability_note(
     return next_result
 
 
+def _check_conflicts_after_schedule(
+    schedule_tool_result: dict[str, Any],
+    calendar_events_tool_result: dict[str, Any],
+    decisions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if schedule_tool_result.get("status") != "ready":
+        payload = {
+            "tool": "check_schedule_conflicts",
+            "status": "pending",
+            "summary": {"blocking": 0, "approved": 0, "total": 0},
+            "conflicts": [],
+            "errors": ["schedule is not ready; conflict check skipped"],
+        }
+        print("[Python Agent] Conflict check skipped JSON:")
+        print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+        return payload
+    draft_allocations = schedule_tool_result.get("draftAllocations") if isinstance(schedule_tool_result.get("draftAllocations"), list) else []
+    calendar_events = calendar_events_tool_result.get("events") if isinstance(calendar_events_tool_result.get("events"), list) else []
+    return check_schedule_conflicts(draft_allocations, calendar_events, decisions or [])
+
+
 def plan_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
     raw_input = str(payload.get("rawInput", "")).strip()
     normalized_context = payload.get("normalizedContext") if isinstance(payload.get("normalizedContext"), dict) else {}
@@ -985,6 +1006,7 @@ def plan_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
     schedule_tool_result = _attach_excluded_availability_note(schedule_tool_result, free_windows_tool_result)
     print("[Python Agent] Schedule result JSON:")
     print(json.dumps(schedule_tool_result, ensure_ascii=False, indent=2), flush=True)
+    conflict_check_result = _check_conflicts_after_schedule(schedule_tool_result, calendar_events_tool_result, [])
     feasibility = validate_atomic_plan(atomic_tasks, normalized_context)
     response = {
         "status": "ready" if feasibility["status"] == "ok" else "overloaded",
@@ -995,6 +1017,7 @@ def plan_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
         "calendarEventsToolResult": calendar_events_tool_result,
         "freeWindowsToolResult": free_windows_tool_result,
         "scheduleToolResult": schedule_tool_result,
+        "conflictCheckResult": conflict_check_result,
     }
     print("[Python Agent] Atomic plan result:")
     print(json.dumps(response, ensure_ascii=False, indent=2), flush=True)
@@ -1009,21 +1032,31 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
     atomic_tasks = planning_state.get("atomicTasks") if isinstance(planning_state.get("atomicTasks"), list) else []
     normalized_context = planning_state.get("normalizedContext") if isinstance(planning_state.get("normalizedContext"), dict) else {}
     tool_results = planning_state.get("toolResults") if isinstance(planning_state.get("toolResults"), list) else []
+    calendar_events_tool_result = planning_state.get("calendarEventsToolResult") if isinstance(planning_state.get("calendarEventsToolResult"), dict) else {}
     free_windows_tool_result = planning_state.get("freeWindowsToolResult") if isinstance(planning_state.get("freeWindowsToolResult"), dict) else {}
     free_windows = free_windows_tool_result.get("freeWindows") if isinstance(free_windows_tool_result.get("freeWindows"), list) else []
     schedule_tool_result = planning_state.get("scheduleToolResult") if isinstance(planning_state.get("scheduleToolResult"), dict) else {}
 
     if option_id == "allow_beyond_golden_time":
+        decisions = [
+            {
+                **decision,
+                "taskId": "*",
+                "source": "user_allowed_beyond_golden_time_for_plan",
+            }
+        ]
         next_schedule_tool_result = schedule_tasks(
             atomic_tasks=atomic_tasks,
             free_windows=free_windows,
-            decisions=[decision],
+            decisions=decisions,
         )
         next_schedule_tool_result = _attach_excluded_availability_note(next_schedule_tool_result, free_windows_tool_result)
+        conflict_check_result = _check_conflicts_after_schedule(next_schedule_tool_result, calendar_events_tool_result, decisions)
         response = {
             "status": "ready",
             "atomicTasks": atomic_tasks,
             "scheduleToolResult": next_schedule_tool_result,
+            "conflictCheckResult": conflict_check_result,
             "toolResults": tool_results,
         }
         print("[Python Agent] Resume allow non-golden result JSON:")
@@ -1149,10 +1182,12 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
         "splitBatches": split_batches,
         "autoSplitRounds": len(split_batches),
     }
+    conflict_check_result = _check_conflicts_after_schedule(next_schedule_tool_result, calendar_events_tool_result, [])
     response = {
         "status": "ready",
         "atomicTasks": next_atomic_tasks,
         "scheduleToolResult": next_schedule_tool_result,
+        "conflictCheckResult": conflict_check_result,
         "splitResult": split_result,
         "toolResults": all_tool_results,
     }

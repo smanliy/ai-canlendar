@@ -4,7 +4,7 @@ import { App as AntApp } from 'antd';
 import { agentApi } from '../services/agentApi';
 import { eventApi } from '../services/eventApi';
 import { useAgentStore } from '../stores/agentStore';
-import type { CalendarEventsToolResult, FreeWindowsToolResult, SchedulePlanOption, ScheduleToolResult } from '../types/agent';
+import type { CalendarEventsToolResult, ConflictCheckResult, FreeWindowsToolResult, SchedulePlanOption, ScheduleToolResult } from '../types/agent';
 import type { EventPayload } from '../types/event';
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -48,6 +48,16 @@ function normalizeScheduleResult(value: ScheduleToolResult | undefined) {
     draftAllocations: value?.draftAllocations ?? [],
     remainingFreeWindows: value?.remainingFreeWindows ?? [],
     interrupt: value?.interrupt ?? null,
+    errors: value?.errors ?? []
+  };
+}
+
+function normalizeConflictCheckResult(value: ConflictCheckResult | undefined) {
+  return {
+    tool: value?.tool ?? 'check_schedule_conflicts',
+    status: value?.status ?? 'pending',
+    summary: value?.summary ?? { blocking: 0, approved: 0, total: 0 },
+    conflicts: value?.conflicts ?? [],
     errors: value?.errors ?? []
   };
 }
@@ -114,13 +124,23 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
 
         updateStep('step-6', 'running');
         await sleep(240);
-        updateStep('step-6', 'success', { message: '节点处理完成' });
+        updateStep('step-6', 'success', {
+          message: result.conflicts.length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突',
+          conflictCheckResult: normalizeConflictCheckResult(result.conflictCheckResult)
+        });
 
         clearClarification();
-        setPlanOptions(result.plans, result.conflicts);
-        updateStep('step-7', 'running');
-        updateStep('step-7', 'success', { runId: result.runId, status: '等待用户选择方案' });
-        message.success(`已生成 ${result.plans.length} 个排期方案`);
+        if (result.plans.length > 0) {
+          setPlanOptions(result.plans, result.conflicts);
+          updateStep('step-7', 'running');
+          updateStep('step-7', 'success', { runId: result.runId, status: '等待用户选择方案' });
+          message.success(`已生成 ${result.plans.length} 个排期方案`);
+        } else {
+          setPlanOptions([], result.conflicts);
+          updateStep('step-7', 'running');
+          updateStep('step-7', 'success', { runId: result.runId, status: '等待用户确认排期处理方式' });
+          message.info('当前排期需要先确认处理方式');
+        }
       } catch (err) {
         useAgentStore.getState().updateStep('step-6', 'failed');
         useAgentStore.getState().setRunStatus('failed');
@@ -149,23 +169,40 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
         message.warning('当前没有可恢复的 Agent 任务');
         return;
       }
-      if (decision.optionId !== 'split_task') {
+      if (!['split_task', 'allow_beyond_golden_time'].includes(decision.optionId)) {
         message.info('这个选项的继续执行逻辑下一步接入');
         return;
       }
+      const isAllowBeyondGoldenTime = decision.optionId === 'allow_beyond_golden_time';
+      const runningMessage = isAllowBeyondGoldenTime ? '正在允许该任务使用非黄金时间并重新排期' : '正在局部拆分该子任务并重新排期';
+      const successMessage = isAllowBeyondGoldenTime ? '已允许该任务使用非黄金时间，并重新生成排期草稿' : '已完成局部拆分并重新生成排期草稿';
+      const toastMessage = isAllowBeyondGoldenTime ? '已记录本次超出黄金时间的用户确认' : '已只替换当前大子任务，并重新生成方案';
+      const errorMessage = isAllowBeyondGoldenTime ? '允许使用非黄金时间失败' : '继续拆分失败';
       try {
-        updateStep('step-5', 'running', { message: '正在局部拆分该子任务并重新排期' });
+        updateStep('step-5', 'running', { message: runningMessage });
         const result = await agentApi.submitDecision(currentRunId, decision);
         updateStep('step-5', 'success', {
-          message: '已完成局部拆分并重新生成排期草稿',
+          message: successMessage,
           scheduleToolResult: normalizeScheduleResult(result.scheduleToolResult),
           splitResult: result.splitResult
         });
+        updateStep('step-6', 'success', {
+          message: result.conflicts.length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突',
+          conflictCheckResult: normalizeConflictCheckResult(result.conflictCheckResult)
+        });
         setPlanOptions(result.plans, result.conflicts);
-        message.success('已只替换当前大子任务，并重新生成方案');
+        updateStep('step-7', 'success', {
+          runId: currentRunId,
+          status: result.plans.length > 0 ? '等待用户选择方案' : '等待用户确认排期处理方式'
+        });
+        if (result.plans.length > 0) {
+          message.success(toastMessage);
+        } else {
+          message.info('当前排期仍需要继续确认处理方式');
+        }
       } catch (err) {
-        updateStep('step-5', 'failed', { message: err instanceof Error ? err.message : '继续拆分失败' });
-        message.error(err instanceof Error ? err.message : '继续拆分失败');
+        updateStep('step-5', 'failed', { message: err instanceof Error ? err.message : errorMessage });
+        message.error(err instanceof Error ? err.message : errorMessage);
       }
     },
     [message]

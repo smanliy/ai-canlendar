@@ -266,6 +266,26 @@ function buildPlans(parsedTask: ParsedScheduleTask, preference: UserPreferenceLi
   }));
 }
 
+function readScheduleStatus(scheduleToolResult: unknown): string {
+  if (!scheduleToolResult || typeof scheduleToolResult !== 'object') return '';
+  const status = (scheduleToolResult as { status?: unknown }).status;
+  return typeof status === 'string' ? status : '';
+}
+
+function isParsedTaskFullyScheduledWithinDeadline(parsedTask: ParsedScheduleTask): boolean {
+  const deadline = dateFromMaybeIso(parsedTask.deadline);
+  if (!deadline || parsedTask.subtasks.length === 0) return false;
+  return parsedTask.subtasks.every((subtask) => {
+    const start = dateFromMaybeIso(subtask.startAt);
+    const end = dateFromMaybeIso(subtask.endAt);
+    return Boolean(start && end && end > start && end <= deadline);
+  });
+}
+
+function canBuildFinalPlans(parsedTask: ParsedScheduleTask, scheduleToolResult: unknown): boolean {
+  return readScheduleStatus(scheduleToolResult) === 'ready' && isParsedTaskFullyScheduledWithinDeadline(parsedTask);
+}
+
 function buildInputWithAgentContext(input: string, normalizedContext: unknown): string {
   if (!normalizedContext) return input;
   return [
@@ -281,10 +301,50 @@ function readNumber(value: unknown): number | undefined {
   return Number.isFinite(numberValue) && numberValue > 0 ? Math.round(numberValue) : undefined;
 }
 
+function readDraftAllocations(planResult: PythonPlanResult): Array<Record<string, unknown>> {
+  const scheduleToolResult = planResult.scheduleToolResult;
+  if (!scheduleToolResult || typeof scheduleToolResult !== 'object') return [];
+  const draftAllocations = (scheduleToolResult as { draftAllocations?: unknown }).draftAllocations;
+  return Array.isArray(draftAllocations) ? draftAllocations.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object') : [];
+}
+
+function buildAllocationLookup(planResult: PythonPlanResult): Map<string, Record<string, unknown>[]> {
+  const lookup = new Map<string, Record<string, unknown>[]>();
+  for (const allocation of readDraftAllocations(planResult)) {
+    const title = typeof allocation.title === 'string' ? allocation.title : '';
+    const taskId = typeof allocation.taskId === 'string' ? allocation.taskId : '';
+    for (const key of [title, taskId].filter(Boolean)) {
+      const list = lookup.get(key) ?? [];
+      list.push(allocation);
+      lookup.set(key, list);
+    }
+  }
+  return lookup;
+}
+
+function buildConflictsFromCheckResult(conflictCheckResult: unknown): Array<{ id: string; message: string }> {
+  if (!conflictCheckResult || typeof conflictCheckResult !== 'object') return [];
+  const conflicts = (conflictCheckResult as { conflicts?: unknown }).conflicts;
+  if (!Array.isArray(conflicts)) return [];
+  return conflicts
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item, index) => {
+      const approvedByUser = Boolean(item.approvedByUser);
+      const severity = typeof item.severity === 'string' ? item.severity : 'blocking';
+      const prefix = approvedByUser || severity === 'info' ? '已确认冲突' : '时间冲突';
+      const message = typeof item.message === 'string' && item.message.trim() ? item.message : '同一时间段内存在多个任务或日程';
+      return {
+        id: typeof item.id === 'string' && item.id.trim() ? item.id : `conflict-${index + 1}`,
+        message: `${prefix}：${message}`
+      };
+    });
+}
+
 function buildParsedTaskFromAtomicPlan(input: string, normalizedContext: Record<string, unknown>, preference: UserPreferenceLike, planResult: PythonPlanResult): ParsedScheduleTask {
   const deadline = typeof normalizedContext.deadline === 'string' && !Number.isNaN(Date.parse(normalizedContext.deadline)) ? normalizedContext.deadline : new Date().toISOString();
   const totalMinutes = readNumber(normalizedContext.totalMinutes) || planResult.totalEstimatedMinutes || 120;
   const taskName = extractTaskName(input);
+  const allocationLookup = buildAllocationLookup(planResult);
 
   return {
     taskName,
@@ -297,14 +357,21 @@ function buildParsedTaskFromAtomicPlan(input: string, normalizedContext: Record<
       preferredStartTime: preference.preferredStartTime,
       preferredEndTime: preference.preferredEndTime
     },
-    subtasks: planResult.atomicTasks.map((task, index) => ({
-      title: task.title,
-      minutes: Math.max(1, Math.round(Number(task.plannedMinutes || 30))),
-      order: Number.isFinite(Number(task.order)) ? Math.round(Number(task.order)) : index + 1,
-      durationRangeMinutes: task.durationRangeMinutes,
-      dependsOn: task.dependsOn,
-      evidence: task.evidence
-    }))
+    subtasks: planResult.atomicTasks.map((task, index) => {
+      const allocation = allocationLookup.get(task.title)?.shift();
+      const startAt = typeof allocation?.startIso === 'string' ? allocation.startIso : undefined;
+      const endAt = typeof allocation?.endIso === 'string' ? allocation.endIso : undefined;
+      return {
+        title: task.title,
+        minutes: Math.max(1, Math.round(Number(task.plannedMinutes || allocation?.plannedMinutes || 30))),
+        order: Number.isFinite(Number(task.order)) ? Math.round(Number(task.order)) : index + 1,
+        durationRangeMinutes: task.durationRangeMinutes,
+        dependsOn: task.dependsOn,
+        evidence: task.evidence,
+        startAt,
+        endAt
+      };
+    })
   };
 }
 
@@ -360,15 +427,20 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
   if (atomicPlan.status === 'overloaded') {
     throw new Error(`任务体量超过可用时长：${atomicPlan.feasibility.issues.join('；') || '请删减任务、增加可用时间或延后截止日期'}`);
   }
-  const parsedTask = ensureScheduleShape(buildParsedTaskFromAtomicPlan(input, normalizedContext, preference, atomicPlan), preference);
-  const pythonAgentAck = await sendTaskToPythonAgent({
-    userId,
-    rawInput: enrichedInput,
-    userPreference: preference,
-    normalizedContext,
-    parsedTask
-  });
-  const plans = buildPlans(parsedTask, preference);
+  const parsedTaskFromPython = buildParsedTaskFromAtomicPlan(input, normalizedContext, preference, atomicPlan);
+  const canShowFinalPlans = canBuildFinalPlans(parsedTaskFromPython, atomicPlan.scheduleToolResult);
+  const parsedTask = canShowFinalPlans ? ensureScheduleShape(parsedTaskFromPython, preference) : parsedTaskFromPython;
+  const pythonAgentAck = canShowFinalPlans
+    ? await sendTaskToPythonAgent({
+        userId,
+        rawInput: enrichedInput,
+        userPreference: preference,
+        normalizedContext,
+        parsedTask
+      })
+    : undefined;
+  const plans = canShowFinalPlans ? buildPlans(parsedTask, preference) : [];
+  const conflicts = buildConflictsFromCheckResult(atomicPlan.conflictCheckResult);
 
   const runId = `run-${Date.now()}`;
   await savePlanningSession(runId, {
@@ -388,10 +460,11 @@ export async function runScheduleAgent({ userId, input, clarificationJson }: Run
     pythonAgentAck,
     plans,
     plan: plans[0],
-    conflicts: [],
+    conflicts,
     calendarEventsToolResult: atomicPlan.calendarEventsToolResult,
     freeWindowsToolResult: atomicPlan.freeWindowsToolResult,
-    scheduleToolResult: atomicPlan.scheduleToolResult
+    scheduleToolResult: atomicPlan.scheduleToolResult,
+    conflictCheckResult: atomicPlan.conflictCheckResult
   };
 }
 
@@ -430,19 +503,24 @@ export async function resumeScheduleDecision(
     atomicTasks: resumeResult.atomicTasks,
     totalEstimatedMinutes: resumeResult.atomicTasks.reduce((sum, task) => sum + Math.max(0, Math.round(Number(task.plannedMinutes || 0))), 0),
     toolResults: resumeResult.toolResults ?? session.atomicPlan.toolResults,
-    scheduleToolResult: resumeResult.scheduleToolResult
+    scheduleToolResult: resumeResult.scheduleToolResult,
+    conflictCheckResult: resumeResult.conflictCheckResult
   };
   await updatePlanningSessionAtomicPlan(runId, userId, nextAtomicPlan);
 
-  const parsedTask = ensureScheduleShape(buildParsedTaskFromAtomicPlan(session.rawInput, session.normalizedContext, session.userPreference, nextAtomicPlan), session.userPreference);
-  const plans = buildPlans(parsedTask, session.userPreference);
+  const parsedTaskFromPython = buildParsedTaskFromAtomicPlan(session.rawInput, session.normalizedContext, session.userPreference, nextAtomicPlan);
+  const canShowFinalPlans = canBuildFinalPlans(parsedTaskFromPython, resumeResult.scheduleToolResult);
+  const parsedTask = canShowFinalPlans ? ensureScheduleShape(parsedTaskFromPython, session.userPreference) : parsedTaskFromPython;
+  const plans = canShowFinalPlans ? buildPlans(parsedTask, session.userPreference) : [];
+  const conflicts = buildConflictsFromCheckResult(resumeResult.conflictCheckResult);
   return {
     runId,
     status: 'waitingConfirm',
     plans,
     plan: plans[0],
-    conflicts: [],
+    conflicts,
     scheduleToolResult: resumeResult.scheduleToolResult,
+    conflictCheckResult: resumeResult.conflictCheckResult,
     splitResult: resumeResult.splitResult
   };
 }

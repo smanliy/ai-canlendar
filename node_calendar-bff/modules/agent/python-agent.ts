@@ -44,6 +44,7 @@ export interface PythonPlanResult {
   calendarEventsToolResult?: unknown;
   freeWindowsToolResult?: unknown;
   scheduleToolResult?: unknown;
+  conflictCheckResult?: unknown;
 }
 
 export interface PythonResumePayload {
@@ -60,6 +61,7 @@ export interface PythonResumeResult {
   issues?: string[];
   atomicTasks: PythonAtomicTask[];
   scheduleToolResult?: unknown;
+  conflictCheckResult?: unknown;
   splitResult?: unknown;
   toolResults?: unknown;
 }

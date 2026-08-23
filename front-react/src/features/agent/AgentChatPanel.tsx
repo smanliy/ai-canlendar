@@ -403,6 +403,33 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
                     </div>
                   ) : null}
 
+                  {step.id === 'step-7' && planOptions.length > 0 ? (
+                    <div className="agent-tool-trace-panel agent-plan-confirm-panel">
+                      <p>我生成了多个排期方案，请选择一个确认写入日历。</p>
+                      {conflicts.length > 0 ? <Alert type="warning" showIcon message={`检测到 ${conflicts.length} 个时间冲突`} /> : null}
+                      <PlanOptionDeck
+                        plans={planOptions}
+                        selectedPlanId={selectedPlanId}
+                        confirmLoading={confirmLoading}
+                        onSelectPlan={selectPlan}
+                        onConfirm={onConfirm}
+                        onRevise={onRevise}
+                        onReject={onReject}
+                      />
+                      <Space className="chat-plan-actions" wrap>
+                        <Input.TextArea
+                          rows={3}
+                          value={revisionInput}
+                          onChange={(event) => setRevisionInput(event.target.value)}
+                          placeholder="输入修改意见，例如：周三晚上不要安排，尽量放到周末上午"
+                        />
+                        <Button onClick={() => void onRevise()} disabled={confirmLoading || loading}>
+                          提交修改意见并重新生成
+                        </Button>
+                      </Space>
+                    </div>
+                  ) : null}
+
                   {step.id === 'step-1' && clarification ? (
                     <div className="clarification-inline-panel">
                       <p>{clarification.message}</p>
@@ -435,33 +462,6 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
           </div>
         ) : null}
 
-        {planOptions.length > 0 ? (
-          <div className="chat-message assistant">
-            <strong>ChronoAgent</strong>
-            <p>我生成了多个排期方案，请选择一个确认写入日历。</p>
-            {conflicts.length > 0 ? <Alert type="warning" showIcon message={`检测到 ${conflicts.length} 个时间冲突`} /> : null}
-            <PlanOptionDeck
-              plans={planOptions}
-              selectedPlanId={selectedPlanId}
-              confirmLoading={confirmLoading}
-              onSelectPlan={selectPlan}
-              onConfirm={onConfirm}
-              onRevise={onRevise}
-              onReject={onReject}
-            />
-            <Space className="chat-plan-actions" wrap>
-              <Input.TextArea
-                rows={3}
-                value={revisionInput}
-                onChange={(event) => setRevisionInput(event.target.value)}
-                placeholder="输入修改意见，例如：周三晚上不要安排，尽量放到周末上午"
-              />
-              <Button onClick={() => void onRevise()} disabled={confirmLoading || loading}>
-                提交修改意见并重新生成
-              </Button>
-            </Space>
-          </div>
-        ) : null}
       </div>
 
       <div className="chat-input-area">

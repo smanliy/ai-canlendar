@@ -128,6 +128,18 @@ export interface ScheduleToolResult {
   errors?: string[];
 }
 
+export interface ConflictCheckResult {
+  tool?: string;
+  status?: 'ok' | 'needsDecision' | 'failed' | 'pending';
+  summary?: {
+    blocking?: number;
+    approved?: number;
+    total?: number;
+  };
+  conflicts?: Array<Record<string, unknown>>;
+  errors?: string[];
+}
+
 export interface PlanItem {
   id: string;
   title: string;

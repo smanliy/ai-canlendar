@@ -94,11 +94,12 @@ export interface AgentRunResponse {
     received?: unknown;
   };
   plans: SchedulePlanOption[];
-  plan: SchedulePlanOption;
+  plan?: SchedulePlanOption;
   conflicts: AgentConflict[];
   calendarEventsToolResult?: unknown;
   freeWindowsToolResult?: unknown;
   scheduleToolResult?: unknown;
+  conflictCheckResult?: unknown;
 }
 
 export interface AgentClarificationResponse {
@@ -116,8 +117,9 @@ export interface AgentDecisionResponse {
   runId: string;
   status: 'waitingConfirm';
   plans: SchedulePlanOption[];
-  plan: SchedulePlanOption;
+  plan?: SchedulePlanOption;
   conflicts: AgentConflict[];
   scheduleToolResult?: unknown;
+  conflictCheckResult?: unknown;
   splitResult?: unknown;
 }

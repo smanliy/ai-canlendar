@@ -948,8 +948,8 @@ def _build_golden_time_interrupt(task: dict[str, Any], task_minutes: int, golden
             },
             {
                 "id": "allow_beyond_golden_time",
-                "title": "同意超出黄金时间",
-                "description": "允许这个子任务使用非黄金空闲时间，系统会记录这是用户批准的例外。",
+                "title": "允许本轮计划使用非黄金空闲时间",
+                "description": "系统会优先使用黄金时间，黄金时间不足时自动使用合法的非黄金空闲时间，但仍避开已有日程、夜晚和周末限制。",
             },
             {
                 "id": "adjust_preference",
@@ -984,8 +984,8 @@ def _build_no_continuous_window_interrupt(
     options = [
         {
             "id": "allow_beyond_golden_time",
-            "title": "同意超出黄金时间",
-            "description": "如果仍有非黄金空闲时间，允许系统优先尝试放入非黄金时间。",
+            "title": "允许本轮计划使用非黄金空闲时间",
+            "description": "系统会优先使用黄金时间，黄金时间不足时自动使用合法的非黄金空闲时间，但仍避开已有日程、夜晚和周末限制。",
         },
         {
             "id": "adjust_preference",
@@ -1041,8 +1041,8 @@ def _build_golden_time_interrupt_v2(
     options = [
         {
             "id": "allow_beyond_golden_time",
-            "title": "同意超出黄金时间",
-            "description": "允许这个子任务使用非黄金空闲时间，系统会记录这是用户批准的例外。",
+            "title": "允许本轮计划使用非黄金空闲时间",
+            "description": "系统会优先使用黄金时间，黄金时间不足时自动使用合法的非黄金空闲时间，但仍避开已有日程、夜晚和周末限制。",
         },
         {
             "id": "adjust_preference",
@@ -1087,8 +1087,8 @@ def _build_non_golden_approval_interrupt(
     options = [
         {
             "id": "allow_beyond_golden_time",
-            "title": "同意超出黄金时间",
-            "description": "仅允许这个子任务使用非黄金空闲时间，并记录为用户批准的例外。",
+            "title": "允许本轮计划使用非黄金空闲时间",
+            "description": "系统会优先使用黄金时间，黄金时间不足时自动使用合法的非黄金空闲时间，但仍避开已有日程、夜晚和周末限制。",
         },
         {
             "id": "adjust_preference",
@@ -1223,6 +1223,135 @@ def schedule_tasks(
     return payload
 
 
+def _allocation_interval(item: dict[str, Any]) -> tuple[datetime, datetime] | None:
+    start_raw = str(item.get("startIso") or item.get("startAt") or item.get("startTime") or "").strip()
+    end_raw = str(item.get("endIso") or item.get("endAt") or item.get("endTime") or "").strip()
+    if not start_raw or not end_raw:
+        return None
+    try:
+        start = _parse_iso_datetime(start_raw)
+        end = _parse_iso_datetime(end_raw)
+    except ValueError:
+        return None
+    if end <= start:
+        return None
+    return start, end
+
+
+def _intervals_overlap(first: tuple[datetime, datetime], second: tuple[datetime, datetime]) -> bool:
+    first_start, first_end = first
+    second_start, second_end = second
+    return first_start < second_end and second_start < first_end
+
+
+def _is_approved_overlap(allocation: dict[str, Any], decisions: list[dict[str, Any]]) -> bool:
+    policy_flags = allocation.get("policyFlags") if isinstance(allocation.get("policyFlags"), dict) else {}
+    if policy_flags.get("approvedConflict") or policy_flags.get("approvedOverlap"):
+        return True
+    task_id = str(allocation.get("taskId") or allocation.get("title") or "").strip()
+    return any(
+        isinstance(decision, dict)
+        and str(decision.get("optionId", "")) in {"allow_time_overlap", "approve_conflict"}
+        and str(decision.get("taskId", "")) in {task_id, "*", "__all__"}
+        for decision in decisions
+    )
+
+
+def check_schedule_conflicts(
+    draft_allocations: list[dict[str, Any]],
+    calendar_events: list[dict[str, Any]],
+    decisions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    conflicts: list[dict[str, Any]] = []
+    user_decisions = [decision for decision in (decisions or []) if isinstance(decision, dict)]
+    allocations = [item for item in draft_allocations if isinstance(item, dict)]
+    events = [item for item in calendar_events if isinstance(item, dict)]
+
+    normalized_allocations: list[tuple[dict[str, Any], tuple[datetime, datetime]]] = []
+    for allocation in allocations:
+        interval = _allocation_interval(allocation)
+        if interval:
+            normalized_allocations.append((allocation, interval))
+        else:
+            errors.append(f"check_schedule_conflicts: invalid draft allocation time: {allocation.get('title')}")
+
+    normalized_events: list[tuple[dict[str, Any], tuple[datetime, datetime]]] = []
+    for event in events:
+        interval = _allocation_interval(event)
+        if interval:
+            normalized_events.append((event, interval))
+        else:
+            errors.append(f"check_schedule_conflicts: invalid calendar event time: {event.get('title')}")
+
+    for allocation, allocation_interval in normalized_allocations:
+        approved = _is_approved_overlap(allocation, user_decisions)
+        for event, event_interval in normalized_events:
+            if not _intervals_overlap(allocation_interval, event_interval):
+                continue
+            conflicts.append(
+                {
+                    "id": f"calendar-overlap-{len(conflicts) + 1}",
+                    "type": "calendar_overlap",
+                    "severity": "info" if approved else "blocking",
+                    "approvedByUser": approved,
+                    "taskTitle": str(allocation.get("title") or ""),
+                    "eventTitle": str(event.get("title") or "已有日程"),
+                    "taskStartIso": allocation_interval[0].isoformat(),
+                    "taskEndIso": allocation_interval[1].isoformat(),
+                    "eventStartIso": event_interval[0].isoformat(),
+                    "eventEndIso": event_interval[1].isoformat(),
+                    "message": (
+                        f"「{allocation.get('title') or '草稿任务'}」与已有日程「{event.get('title') or '已有日程'}」时间重叠"
+                        + ("，但已由用户确认。" if approved else "，需要处理。")
+                    ),
+                }
+            )
+
+    for first_index, (first, first_interval) in enumerate(normalized_allocations):
+        for second, second_interval in normalized_allocations[first_index + 1 :]:
+            if not _intervals_overlap(first_interval, second_interval):
+                continue
+            first_approved = _is_approved_overlap(first, user_decisions)
+            second_approved = _is_approved_overlap(second, user_decisions)
+            approved = first_approved and second_approved
+            conflicts.append(
+                {
+                    "id": f"draft-overlap-{len(conflicts) + 1}",
+                    "type": "draft_overlap",
+                    "severity": "info" if approved else "blocking",
+                    "approvedByUser": approved,
+                    "taskTitle": str(first.get("title") or ""),
+                    "otherTaskTitle": str(second.get("title") or ""),
+                    "taskStartIso": first_interval[0].isoformat(),
+                    "taskEndIso": first_interval[1].isoformat(),
+                    "otherTaskStartIso": second_interval[0].isoformat(),
+                    "otherTaskEndIso": second_interval[1].isoformat(),
+                    "message": (
+                        f"草稿任务「{first.get('title') or '任务A'}」与「{second.get('title') or '任务B'}」时间重叠"
+                        + ("，但已由用户确认。" if approved else "，需要处理。")
+                    ),
+                }
+            )
+
+    blocking_count = sum(1 for item in conflicts if item.get("severity") == "blocking")
+    approved_count = sum(1 for item in conflicts if item.get("approvedByUser"))
+    payload = {
+        "tool": "check_schedule_conflicts",
+        "status": "needsDecision" if blocking_count else "ok",
+        "summary": {
+            "blocking": blocking_count,
+            "approved": approved_count,
+            "total": len(conflicts),
+        },
+        "conflicts": conflicts,
+        "errors": errors,
+    }
+    print("[Python Agent Tool] Conflict check JSON:")
+    print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+    return payload
+
+
 TOOL_REGISTRY = {
     "web_search": {
         "description": "搜索外部网页。参数：q 搜索关键词，count 结果数量。",
@@ -1259,6 +1388,11 @@ TOOL_REGISTRY = {
         "description": "根据原子任务、空闲时间和用户决策生成草稿排期；黄金时间不足时返回中断选项。",
         "parameters": {"atomicTasks": "array", "freeWindows": "array", "decisions": "array"},
         "handler": schedule_tasks,
+    },
+    "check_schedule_conflicts": {
+        "description": "检测草稿排期是否与已有日程或草稿内部产生时间重叠。",
+        "parameters": {"draftAllocations": "array", "calendarEvents": "array", "decisions": "array"},
+        "handler": check_schedule_conflicts,
     },
 }
 
@@ -1349,6 +1483,18 @@ def dispatch_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(decisions, list):
             return {"tool": tool_name, "status": "failed", "errors": ["schedule_tasks: decisions must be array"]}
         return schedule_tasks(atomic_tasks, free_windows, decisions)
+
+    if tool_name == "check_schedule_conflicts":
+        draft_allocations = args.get("draftAllocations") or tool_call.get("draftAllocations") or []
+        calendar_events = args.get("calendarEvents") or tool_call.get("calendarEvents") or []
+        decisions = args.get("decisions") or tool_call.get("decisions") or []
+        if not isinstance(draft_allocations, list):
+            return {"tool": tool_name, "status": "failed", "conflicts": [], "errors": ["check_schedule_conflicts: draftAllocations must be array"]}
+        if not isinstance(calendar_events, list):
+            return {"tool": tool_name, "status": "failed", "conflicts": [], "errors": ["check_schedule_conflicts: calendarEvents must be array"]}
+        if not isinstance(decisions, list):
+            return {"tool": tool_name, "status": "failed", "conflicts": [], "errors": ["check_schedule_conflicts: decisions must be array"]}
+        return check_schedule_conflicts(draft_allocations, calendar_events, decisions)
 
     return {
         "tool": tool_name,
