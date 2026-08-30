@@ -1,6 +1,16 @@
 import type { ParsedScheduleTask } from './agent.types';
+import type { TokenUsageSummary } from './field-extractor';
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
+
+interface DeepSeekResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+}
 
 interface ParseTaskContext {
   nowIso: string;
@@ -56,6 +66,22 @@ function normalizeParsedTask(value: unknown): ParsedScheduleTask {
   };
 }
 
+function readTokenUsage(data: DeepSeekResponse, model: string): TokenUsageSummary | null {
+  const usage = data.usage;
+  const promptTokens = Number(usage?.prompt_tokens);
+  const completionTokens = Number(usage?.completion_tokens);
+  const totalTokens = Number(usage?.total_tokens);
+  if (!Number.isFinite(promptTokens) || !Number.isFinite(completionTokens) || !Number.isFinite(totalTokens)) {
+    return null;
+  }
+  return {
+    promptTokens: Math.max(0, Math.round(promptTokens)),
+    completionTokens: Math.max(0, Math.round(completionTokens)),
+    totalTokens: Math.max(0, Math.round(totalTokens)),
+    model
+  };
+}
+
 function buildSystemPrompt(): string {
   return [
     'You are the task decomposition component of a calendar scheduling system.',
@@ -80,8 +106,9 @@ function buildSystemPrompt(): string {
     'subtasks must include concrete startAt and endAt ISO 8601 timestamps whenever enough information can be inferred from input and context.',
     'Each subtask startAt/endAt must include year, month, day, hour, minute, and second.',
     'Respect preferredStartTime, preferredEndTime, dailyFocusLimitMinutes, avoidWeekends, timezone, and nowIso from context.',
-    'Generate at least 3 subtasks and at most 6 subtasks.',
-    'If the work is small, still split it into 3 meaningful lightweight subtasks.',
+    'First decide whether the request genuinely needs decomposition.',
+    'For a simple one-off event, reminder, meeting, or small atomic task, return exactly 1 subtask that represents the whole work.',
+    'Only decompose complex work with multiple meaningful stages; in that case generate 2 to 6 subtasks.',
     'The required JSON shape is:',
     JSON.stringify({
       taskName: '\u5b8c\u6210\u5f00\u9898\u62a5\u544a',
@@ -103,7 +130,7 @@ function buildSystemPrompt(): string {
   ].join('\n');
 }
 
-export async function parseTaskWithDeepSeek(input: string, context: ParseTaskContext): Promise<ParsedScheduleTask> {
+export async function parseTaskWithDeepSeek(input: string, context: ParseTaskContext): Promise<ParsedScheduleTask & { llmUsage?: TokenUsageSummary }> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
 
@@ -144,11 +171,14 @@ export async function parseTaskWithDeepSeek(input: string, context: ParseTaskCon
     throw new Error(`DeepSeek request failed: HTTP ${response.status} ${rawText}`);
   }
 
-  const data = JSON.parse(rawText) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = JSON.parse(rawText) as DeepSeekResponse;
   const content = data.choices?.[0]?.message?.content;
   if (!content) {
     throw new Error('DeepSeek returned empty content');
   }
 
-  return normalizeParsedTask(JSON.parse(content));
+  return {
+    ...normalizeParsedTask(JSON.parse(content)),
+    llmUsage: readTokenUsage(data, model) ?? undefined
+  };
 }

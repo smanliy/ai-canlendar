@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent 异步执行与恢复机制可视化</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --paper: #ffffff;
+      --ink: #1f2937;
+      --muted: #667085;
+      --line: #c9d2dc;
+      --job: #e7f0ff;
+      --job-border: #7aa7f7;
+      --checkpoint: #fff1d6;
+      --checkpoint-border: #e0a028;
+      --event: #e6f7ef;
+      --event-border: #38a169;
+      --comp: #ffe8e8;
+      --comp-border: #e05757;
+      --api: #ece9ff;
+      --api-border: #7962d6;
+      --db: #edf2f7;
+      --db-border: #718096;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+    }
+
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    header {
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      line-height: 1.25;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 18px 0;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--paper);
+      padding: 6px 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .canvas {
+      overflow: auto;
+      border: 1px solid #d7dee8;
+      border-radius: 14px;
+      background: var(--paper);
+      box-shadow: 0 18px 45px rgba(31, 41, 55, 0.08);
+      padding: 18px;
+    }
+
+    svg {
+      display: block;
+      min-width: 1180px;
+      width: 100%;
+      height: auto;
+    }
+
+    .node rect {
+      stroke-width: 2;
+      rx: 10;
+      filter: drop-shadow(0 8px 13px rgba(31, 41, 55, 0.09));
+    }
+
+    .node text {
+      fill: var(--ink);
+      font-size: 13px;
+    }
+
+    .node .title {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .node .meta {
+      fill: var(--muted);
+      font-size: 12px;
+    }
+
+    .api rect {
+      fill: var(--api);
+      stroke: var(--api-border);
+    }
+
+    .job rect {
+      fill: var(--job);
+      stroke: var(--job-border);
+    }
+
+    .checkpoint rect {
+      fill: var(--checkpoint);
+      stroke: var(--checkpoint-border);
+    }
+
+    .event rect {
+      fill: var(--event);
+      stroke: var(--event-border);
+    }
+
+    .comp rect {
+      fill: var(--comp);
+      stroke: var(--comp-border);
+    }
+
+    .db rect {
+      fill: var(--db);
+      stroke: var(--db-border);
+    }
+
+    .sync rect {
+      fill: #f7fafc;
+      stroke: #a0aec0;
+      stroke-dasharray: 6 5;
+    }
+
+    .arrow {
+      fill: none;
+      stroke: #75869a;
+      stroke-width: 2;
+      marker-end: url(#arrow);
+    }
+
+    .arrow-strong {
+      stroke: #344054;
+      stroke-width: 2.4;
+    }
+
+    .arrow-dashed {
+      stroke-dasharray: 7 6;
+    }
+
+    .label {
+      fill: #4a5568;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .lane-title {
+      fill: #475467;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .lane-line {
+      stroke: #e4e9f0;
+      stroke-width: 1;
+    }
+
+    .notes {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .note {
+      border: 1px solid #d7dee8;
+      border-radius: 10px;
+      background: var(--paper);
+      padding: 12px;
+    }
+
+    .note strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .note code {
+      color: #344054;
+      font-size: 12px;
+      word-break: break-word;
+    }
+
+    .note p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    @media (max-width: 860px) {
+      main {
+        padding: 16px;
+      }
+
+      .notes {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Agent 异步执行与恢复机制可视化</h1>
+      <p class="subtitle">这张图对应当前代码里的后端实现：持久化任务队列、用户确认 checkpoint、异常重试、写入日程后的撤销补偿。</p>
+    </header>
+
+    <div class="legend" aria-label="图例">
+      <span><i class="dot" style="background: var(--api-border)"></i>API 入口</span>
+      <span><i class="dot" style="background: var(--job-border)"></i>异步任务</span>
+      <span><i class="dot" style="background: var(--checkpoint-border)"></i>可恢复节点</span>
+      <span><i class="dot" style="background: var(--event-border)"></i>过程事件</span>
+      <span><i class="dot" style="background: var(--comp-border)"></i>撤销补偿</span>
+      <span><i class="dot" style="background: var(--db-border)"></i>数据库表</span>
+    </div>
+
+    <section class="canvas" aria-label="Agent 异步执行流程图">
+      <svg viewBox="0 0 1180 760" role="img" aria-labelledby="diagram-title diagram-desc">
+        <title id="diagram-title">Agent 异步执行与恢复机制流程图</title>
+        <desc id="diagram-desc">展示从前端发起任务，到 AgentJob 入队，worker 执行，checkpoint 挂起，用户恢复，最终写入日历或撤销补偿的流程。</desc>
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#75869a"></path>
+          </marker>
+        </defs>
+
+        <line class="lane-line" x1="20" y1="86" x2="1160" y2="86"></line>
+        <line class="lane-line" x1="20" y1="276" x2="1160" y2="276"></line>
+        <line class="lane-line" x1="20" y1="470" x2="1160" y2="470"></line>
+        <text class="lane-title" x="24" y="52">请求入口</text>
+        <text class="lane-title" x="24" y="242">后台执行</text>
+        <text class="lane-title" x="24" y="438">持久化与恢复</text>
+        <text class="lane-title" x="24" y="632">写入与补偿</text>
+
+        <g class="node sync" transform="translate(46 112)">
+          <rect width="210" height="104"></rect>
+          <text class="title" x="18" y="28">当前工作台默认流程</text>
+          <text x="18" y="54">POST /api/agent/runs</text>
+          <text x="18" y="76">或 /runs/stream</text>
+          <text class="meta" x="18" y="96">同步 / SSE，不进 AgentJob</text>
+        </g>
+
+        <g class="node api" transform="translate(326 112)">
+          <rect width="220" height="104"></rect>
+          <text class="title" x="18" y="28">异步任务入口</text>
+          <text x="18" y="54">POST /api/agent/jobs</text>
+          <text class="meta" x="18" y="78">createScheduleJob()</text>
+          <text class="meta" x="18" y="96">返回 202 queued</text>
+        </g>
+
+        <g class="node job" transform="translate(636 112)">
+          <rect width="220" height="104"></rect>
+          <text class="title" x="18" y="28">AgentJob 入队</text>
+          <text x="18" y="54">status = queued</text>
+          <text class="meta" x="18" y="78">type: schedule_plan</text>
+          <text class="meta" x="18" y="96">idempotencyKey 防重复</text>
+        </g>
+
+        <g class="node db" transform="translate(930 112)">
+          <rect width="200" height="104"></rect>
+          <text class="title" x="18" y="28">表: AgentJob</text>
+          <text x="18" y="54">runId / status</text>
+          <text x="18" y="76">attempt / maxAttempts</text>
+          <text class="meta" x="18" y="96">lockedAt / heartbeatAt</text>
+        </g>
+
+        <path class="arrow arrow-strong" d="M 546 164 C 580 164, 598 164, 636 164"></path>
+        <path class="arrow" d="M 856 164 C 888 164, 900 164, 930 164"></path>
+        <text class="label" x="568" y="148">insert</text>
+
+        <g class="node job" transform="translate(80 306)">
+          <rect width="220" height="112"></rect>
+          <text class="title" x="18" y="28">Worker 轮询</text>
+          <text x="18" y="54">startAgentJobWorker()</text>
+          <text x="18" y="76">claimNextAgentJob()</text>
+          <text class="meta" x="18" y="98">FOR UPDATE SKIP LOCKED</text>
+        </g>
+
+        <g class="node job" transform="translate(372 306)">
+          <rect width="220" height="112"></rect>
+          <text class="title" x="18" y="28">执行 Agent 主流程</text>
+          <text x="18" y="54">runAgentMainFlow()</text>
+          <text x="18" y="76">排期 / 冲突 / 调整</text>
+          <text class="meta" x="18" y="98">持续 heartbeat</text>
+        </g>
+
+        <g class="node event" transform="translate(664 306)">
+          <rect width="220" height="112"></rect>
+          <text class="title" x="18" y="28">过程事件</text>
+          <text x="18" y="54">step:start</text>
+          <text x="18" y="76">step:success / failed</text>
+          <text class="meta" x="18" y="98">GET /jobs/:id/events</text>
+        </g>
+
+        <g class="node db" transform="translate(930 306)">
+          <rect width="200" height="112"></rect>
+          <text class="title" x="18" y="28">表: AgentJobEvent</text>
+          <text x="18" y="54">jobId / type</text>
+          <text x="18" y="76">stepId / payload</text>
+          <text class="meta" x="18" y="98">traceId / durationMs</text>
+        </g>
+
+        <path class="arrow arrow-strong" d="M 190 216 C 190 250, 190 270, 190 306"></path>
+        <path class="arrow arrow-strong" d="M 300 362 C 330 362, 344 362, 372 362"></path>
+        <path class="arrow" d="M 592 362 C 624 362, 636 362, 664 362"></path>
+        <path class="arrow" d="M 884 362 C 904 362, 912 362, 930 362"></path>
+        <text class="label" x="214" y="264">poll every 1.2s</text>
+        <text class="label" x="604" y="346">append</text>
+
+        <g class="node checkpoint" transform="translate(86 500)">
+          <rect width="240" height="112"></rect>
+          <text class="title" x="18" y="28">等待用户确认</text>
+          <text x="18" y="54">status = waiting_user</text>
+          <text x="18" y="76">createWaitingCheckpoint()</text>
+          <text class="meta" x="18" y="98">保存 stateSnapshot</text>
+        </g>
+
+        <g class="node db" transform="translate(380 500)">
+          <rect width="224" height="112"></rect>
+          <text class="title" x="18" y="28">表: AgentCheckpoint</text>
+          <text x="18" y="54">type / stepName</text>
+          <text x="18" y="76">resumePayload</text>
+          <text class="meta" x="18" y="98">version / expiresAt</text>
+        </g>
+
+        <g class="node api" transform="translate(682 500)">
+          <rect width="234" height="112"></rect>
+          <text class="title" x="18" y="28">用户继续 / 恢复</text>
+          <text x="18" y="54">POST /runs/:runId/decision/jobs</text>
+          <text x="18" y="76">resolveCheckpoint()</text>
+          <text class="meta" x="18" y="98">生成 resume_decision job</text>
+        </g>
+
+        <g class="node api" transform="translate(946 500)">
+          <rect width="184" height="112"></rect>
+          <text class="title" x="18" y="28">回滚到确认点</text>
+          <text x="18" y="54">POST /runs/:runId/rollback</text>
+          <text x="18" y="76">恢复 planningSession</text>
+          <text class="meta" x="18" y="98">创建新 checkpoint</text>
+        </g>
+
+        <path class="arrow arrow-strong" d="M 482 418 C 482 452, 206 452, 206 500"></path>
+        <path class="arrow" d="M 326 556 C 350 556, 358 556, 380 556"></path>
+        <path class="arrow arrow-strong" d="M 604 556 C 636 556, 650 556, 682 556"></path>
+        <path class="arrow arrow-dashed" d="M 799 500 C 799 462, 482 462, 482 418"></path>
+        <path class="arrow arrow-dashed" d="M 1038 500 C 1038 458, 552 458, 492 500"></path>
+        <text class="label" x="214" y="482">needsUserInput / waitingConfirm</text>
+        <text class="label" x="620" y="540">checkpointId + version</text>
+
+        <g class="node job" transform="translate(84 648)">
+          <rect width="216" height="86"></rect>
+          <text class="title" x="18" y="28">异常重试</text>
+          <text x="18" y="54">failAgentJob()</text>
+          <text class="meta" x="18" y="74">attempt &lt; maxAttempts 回队列</text>
+        </g>
+
+        <g class="node job" transform="translate(344 648)">
+          <rect width="216" height="86"></rect>
+          <text class="title" x="18" y="28">心跳超时恢复</text>
+          <text x="18" y="54">recoverStaleAgentJobs()</text>
+          <text class="meta" x="18" y="74">stale running 重新 queued</text>
+        </g>
+
+        <g class="node comp" transform="translate(604 648)">
+          <rect width="236" height="86"></rect>
+          <text class="title" x="18" y="28">Agent 写入日程撤销</text>
+          <text x="18" y="54">POST /events/agent-runs/latest/undo</text>
+          <text class="meta" x="18" y="74">按 agentRunId 软删除</text>
+        </g>
+
+        <g class="node db" transform="translate(886 648)">
+          <rect width="244" height="86"></rect>
+          <text class="title" x="18" y="28">表: AgentCompensation</text>
+          <text x="18" y="54">undo_agent_calendar_events</text>
+          <text class="meta" x="18" y="74">affectedCount / reason</text>
+        </g>
+
+        <path class="arrow arrow-dashed" d="M 372 418 C 240 476, 192 572, 192 648"></path>
+        <path class="arrow arrow-dashed" d="M 482 418 C 458 500, 452 574, 452 648"></path>
+        <path class="arrow" d="M 840 690 C 862 690, 868 690, 886 690"></path>
+        <text class="label" x="286" y="638">error path</text>
+        <text class="label" x="492" y="638">worker crash path</text>
+      </svg>
+    </section>
+
+    <section class="notes" aria-label="验收参照物">
+      <article class="note">
+        <strong>1. 队列是否生效</strong>
+        <code>AgentJob.status: queued -> running -> waiting_user/succeeded</code>
+        <p>看 attempt、lockedBy、heartbeatAt 是否随 worker 执行变化。</p>
+      </article>
+      <article class="note">
+        <strong>2. 中断后能否续接</strong>
+        <code>AgentCheckpoint.stateSnapshot + resumePayload</code>
+        <p>等待用户确认时应该出现 pending checkpoint，继续后变 resolved。</p>
+      </article>
+      <article class="note">
+        <strong>3. 异常是否可重试</strong>
+        <code>recoverStaleAgentJobs() / failAgentJob()</code>
+        <p>running 超时会重新 queued；超过 maxAttempts 后 failed。</p>
+      </article>
+      <article class="note">
+        <strong>4. 写入后能否撤销</strong>
+        <code>CalendarEvent.agentRunId -> AgentCompensation</code>
+        <p>撤销会软删除 Agent 日程，并记录 affectedCount。</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

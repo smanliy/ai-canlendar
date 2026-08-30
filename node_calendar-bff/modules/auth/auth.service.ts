@@ -222,9 +222,12 @@ export async function sendCode(payload: SendCodeDto, meta?: RequestMeta) {
 
   console.log(`[Mock SMS] ${scene} 验证码：${code}，手机号：${phone}`);
 
+  const exposeMockCode = process.env.MOCK_SMS_CODE_IN_RESPONSE !== 'false';
+
   return {
     expiresIn: SMS_CODE_TTL_MS / 1000,
-    cooldown: SMS_SEND_COOLDOWN_MS / 1000
+    cooldown: SMS_SEND_COOLDOWN_MS / 1000,
+    mockCode: exposeMockCode ? code : undefined
   };
 }
 

@@ -20,6 +20,12 @@ export interface SmsCodePayload {
   scene: 'login' | 'register';
 }
 
+export interface SmsCodeResult {
+  expiresIn: number;
+  cooldown: number;
+  mockCode?: string;
+}
+
 export interface AuthResult {
   user: User;
   token: string;

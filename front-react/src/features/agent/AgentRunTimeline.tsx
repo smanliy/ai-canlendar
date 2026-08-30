@@ -15,6 +15,14 @@ const dotByStatus = {
   failed: <CloseCircleFilled className="timeline-failed" />
 };
 
+function formatTokenUsage(step: AgentRunStep): string | null {
+  const usage = step.llmUsage ?? (step.output && typeof step.output === 'object' ? (step.output as { llmUsage?: { totalTokens?: number } }).llmUsage ?? null : null);
+  if (!usage || typeof usage.totalTokens !== 'number' || !Number.isFinite(usage.totalTokens) || usage.totalTokens <= 0) {
+    return null;
+  }
+  return `${Math.round(usage.totalTokens)} tokens`;
+}
+
 export function AgentRunTimeline({ steps, onStepClick }: AgentRunTimelineProps) {
   return (
     <section className="panel-block timeline-block">
@@ -27,7 +35,10 @@ export function AgentRunTimeline({ steps, onStepClick }: AgentRunTimelineProps) 
           dot: dotByStatus[step.status],
           children: (
             <button className="timeline-step" type="button" onClick={() => onStepClick(step)}>
-              <span>{step.name}</span>
+              <span className="timeline-step-name">
+                {step.name}
+                {formatTokenUsage(step) ? <i className="timeline-token-count">{formatTokenUsage(step)}</i> : null}
+              </span>
               <em>{step.status}</em>
             </button>
           )

@@ -3,9 +3,12 @@ import dayjs from 'dayjs';
 import { useAuthStore } from '../stores/authStore';
 import type {
   AgentConversationMessage,
+  AgentCompressionSettings,
   AgentRunDetail,
   AgentRunStep,
   AgentRunStatus,
+  AgentTokenMetricsSnapshot,
+  AgentTrace,
   AgentUserPreference,
   CalendarEventsToolResult,
   ConflictCheckResult,
@@ -13,7 +16,8 @@ import type {
   SchedulePlan,
   SchedulePlanOption,
   ScheduleToolResult,
-  SplitResult
+  SplitResult,
+  TokenUsage
 } from '../types/agent';
 
 interface ApiResponse<T> {
@@ -26,7 +30,7 @@ export type SchedulePlanResult =
   | {
       status: 'commandResult';
       runId: string;
-      command: 'clear' | 'compat';
+      command: 'clear' | 'compact';
       message: string;
       summary?: string;
     }
@@ -38,23 +42,40 @@ export type SchedulePlanResult =
       reason: string;
     }
   | {
+      status: 'autoCreated';
+      runId: string;
+      rawInput: string;
+      message: string;
+      createdCount: number;
+      plan: SchedulePlanOption;
+      calendarEventsToolResult?: CalendarEventsToolResult;
+      freeWindowsToolResult?: FreeWindowsToolResult;
+      scheduleToolResult?: ScheduleToolResult;
+      conflictCheckResult?: ConflictCheckResult;
+      agentTrace?: AgentTrace;
+      llmUsageByStep?: Record<string, TokenUsage>;
+    }
+  | {
       status: 'needsUserInput';
       runId: string;
       rawInput: string;
       message: string;
       reasons: string[];
       clarificationJson: Record<string, unknown>;
+      llmUsageByStep?: Record<string, TokenUsage>;
     }
   | {
       status: 'waitingConfirm';
       runId: string;
       plans: SchedulePlanOption[];
-      plan?: SchedulePlan;
+      plan?: SchedulePlanOption;
       conflicts: { id: string; message: string }[];
       calendarEventsToolResult?: CalendarEventsToolResult;
       freeWindowsToolResult?: FreeWindowsToolResult;
       scheduleToolResult?: ScheduleToolResult;
       conflictCheckResult?: ConflictCheckResult;
+      agentTrace?: AgentTrace;
+      llmUsageByStep?: Record<string, TokenUsage>;
     };
 
 export type AgentStreamEvent =
@@ -63,7 +84,7 @@ export type AgentStreamEvent =
   | { type: 'stepSucceeded'; stepId: string; output?: unknown }
   | { type: 'stepFailed'; stepId: string; output?: unknown }
   | { type: 'directAnswer'; answer: string; reason: string }
-  | { type: 'commandResult'; command: 'clear' | 'compat'; message: string; summary?: string }
+  | { type: 'commandResult'; command: 'clear' | 'compact'; message: string; summary?: string }
   | { type: 'final'; data: SchedulePlanResult }
   | { type: 'error'; message: string; code?: number };
 
@@ -71,10 +92,19 @@ export type ConversationMessagePayload = Omit<AgentConversationMessage, 'id' | '
   payload?: unknown;
 };
 
+export interface PlanAnnotationPayload {
+  planCardId: string;
+  regionId: string;
+  selectedText: string;
+  comment: string;
+  path?: string;
+  kind?: string;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 const CSRF_COOKIE_NAME = 'chrono_csrf_token';
 
-const stepNames = ['解析用户输入', '拆解子任务', '查询已有日程', '计算空闲时间', '生成排期方案', '检测冲突', '等待用户确认', '执行写入日历'];
+const stepNames = ['解析用户输入', '判断是否拆分', '查询已有日程', '计算空闲时间', '生成排期方案', '检测冲突', '等待用户确认', '执行写入日历'];
 
 const now = () => dayjs().toISOString();
 
@@ -191,11 +221,25 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
     return;
   }
 
+  if (result.status === 'autoCreated') {
+    await onEvent({
+      type: 'directAnswer',
+      answer: result.message,
+      reason: '任务无需拆分且已找到理想时间'
+    });
+    await onEvent({ type: 'final', data: result });
+    return;
+  }
+
   if (result.status === 'needsUserInput') {
     await onEvent({
       type: 'stepUpdated',
       stepId: 'step-1',
-      output: { message: result.message, reasons: result.reasons }
+      output: {
+        message: result.message,
+        reasons: result.reasons,
+        llmUsage: result.llmUsageByStep?.['step-1'] ?? null
+      }
     });
     await onEvent({ type: 'final', data: result });
     return;
@@ -204,14 +248,18 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
   await onEvent({
     type: 'stepSucceeded',
     stepId: 'step-1',
-    output: { message: '用户输入已解析' }
+    output: {
+      message: '用户输入已解析',
+      llmUsage: result.llmUsageByStep?.['step-1'] ?? null
+    }
   });
   await onEvent({
     type: 'stepSucceeded',
     stepId: 'step-3',
     output: {
       message: '已查询用户本地日程',
-      calendarEventsResult: result.calendarEventsToolResult
+      calendarEventsResult: result.calendarEventsToolResult,
+      agentTrace: result.agentTrace
     }
   });
   await onEvent({
@@ -219,7 +267,8 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
     stepId: 'step-4',
     output: {
       message: '已根据本地日程和用户偏好计算空闲时间',
-      freeWindowsResult: result.freeWindowsToolResult
+      freeWindowsResult: result.freeWindowsToolResult,
+      agentTrace: result.agentTrace
     }
   });
   await onEvent({
@@ -227,7 +276,9 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
     stepId: 'step-5',
     output: {
       message: readResultStatus(result.scheduleToolResult) === 'needsDecision' ? '排期工具需要用户决策后才能继续' : '已调用 Python 排期工具生成草稿方案',
-      scheduleToolResult: result.scheduleToolResult
+      scheduleToolResult: result.scheduleToolResult,
+      agentTrace: result.agentTrace,
+      llmUsage: result.llmUsageByStep?.['step-2'] ?? null
     }
   });
   if (readResultStatus(result.scheduleToolResult) === 'needsDecision' || readResultStatus(result.scheduleToolResult) === 'pending') {
@@ -239,7 +290,8 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
     stepId: 'step-6',
     output: {
       message: readResultStatus(result.conflictCheckResult) === 'needsDecision' ? '检测到未确认冲突，需要处理后才能继续' : result.conflicts.length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突',
-      conflictCheckResult: result.conflictCheckResult
+      conflictCheckResult: result.conflictCheckResult,
+      agentTrace: result.agentTrace
     }
   });
   if (readResultStatus(result.conflictCheckResult) === 'needsDecision' || readResultStatus(result.conflictCheckResult) === 'pending') {
@@ -258,6 +310,21 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
 }
 
 export const agentApi = {
+  async getCompressionSettings(): Promise<AgentCompressionSettings> {
+    return request<AgentCompressionSettings>('/agent/compression');
+  },
+
+  async updateCompressionSettings(enabled: boolean): Promise<AgentCompressionSettings> {
+    return request<AgentCompressionSettings>('/agent/compression', {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled })
+    });
+  },
+
+  async getTokenMetrics(): Promise<AgentTokenMetricsSnapshot> {
+    return request<AgentTokenMetricsSnapshot>('/agent/token-metrics');
+  },
+
   async listConversationMessages(): Promise<AgentConversationMessage[]> {
     return request<AgentConversationMessage[]>('/agent/messages');
   },
@@ -367,9 +434,9 @@ export const agentApi = {
     if (!input.trim()) throw new Error('请输入排期目标');
 
     const data = await request<{
-      status: 'needsUserInput' | 'waitingConfirm' | 'commandResult' | 'llmAnswer';
+      status: 'needsUserInput' | 'waitingConfirm' | 'commandResult' | 'llmAnswer' | 'autoCreated';
       runId: string;
-      command?: 'clear' | 'compat';
+      command?: 'clear' | 'compact';
       answer?: string;
       reason?: string;
       summary?: string;
@@ -379,13 +446,16 @@ export const agentApi = {
       reasons?: string[];
       clarificationJson?: Record<string, unknown>;
       plans?: SchedulePlanOption[];
-      plan?: SchedulePlan;
+      plan?: SchedulePlanOption;
       conflicts?: { id: string; message: string }[];
+      createdCount?: number;
       pythonAgentAck?: { message: string };
       calendarEventsToolResult?: CalendarEventsToolResult;
       freeWindowsToolResult?: FreeWindowsToolResult;
       scheduleToolResult?: ScheduleToolResult;
       conflictCheckResult?: ConflictCheckResult;
+      agentTrace?: AgentTrace;
+      llmUsageByStep?: Record<string, TokenUsage>;
     }>('/agent/runs', {
       method: 'POST',
       body: JSON.stringify({ input, clarificationJson })
@@ -395,7 +465,7 @@ export const agentApi = {
       return {
         status: 'commandResult',
         runId: data.runId,
-        command: data.command ?? 'compat',
+        command: data.command ?? 'compact',
         message: data.message || '命令已执行',
         summary: data.summary
       };
@@ -411,6 +481,23 @@ export const agentApi = {
       };
     }
 
+    if (data.status === 'autoCreated') {
+      return {
+        status: 'autoCreated',
+        runId: data.runId,
+        rawInput: data.rawInput ?? input,
+        message: data.message || '已找到理想时间并写入日历。',
+        createdCount: data.createdCount ?? 0,
+        plan: data.plan as SchedulePlanOption,
+        calendarEventsToolResult: data.calendarEventsToolResult,
+        freeWindowsToolResult: data.freeWindowsToolResult,
+        scheduleToolResult: data.scheduleToolResult,
+        conflictCheckResult: data.conflictCheckResult,
+        agentTrace: data.agentTrace,
+        llmUsageByStep: data.llmUsageByStep
+      };
+    }
+
     if (data.status === 'needsUserInput') {
       return {
         status: 'needsUserInput',
@@ -418,7 +505,8 @@ export const agentApi = {
         rawInput: data.rawInput ?? input,
         message: data.message || '信息还不够明确，请补全 JSON 后再次发送。',
         reasons: data.reasons ?? [],
-        clarificationJson: data.clarificationJson ?? {}
+        clarificationJson: data.clarificationJson ?? {},
+        llmUsageByStep: data.llmUsageByStep
       };
     }
 
@@ -435,7 +523,9 @@ export const agentApi = {
       calendarEventsToolResult: data.calendarEventsToolResult,
       freeWindowsToolResult: data.freeWindowsToolResult,
       scheduleToolResult: data.scheduleToolResult,
-      conflictCheckResult: data.conflictCheckResult
+      conflictCheckResult: data.conflictCheckResult,
+      agentTrace: data.agentTrace,
+      llmUsageByStep: data.llmUsageByStep
     };
   },
 
@@ -453,6 +543,7 @@ export const agentApi = {
     scheduleToolResult?: ScheduleToolResult;
     conflictCheckResult?: ConflictCheckResult;
     splitResult?: SplitResult;
+    agentTrace?: AgentTrace;
   }> {
     if (!runId) throw new Error('缺少 RunId');
     return request(`/agent/runs/${encodeURIComponent(runId)}/decision`, {
@@ -461,9 +552,25 @@ export const agentApi = {
     });
   },
 
-  async revise(runId: string): Promise<{ status: AgentRunStatus }> {
+  async submitAnnotation(runId: string, annotation: PlanAnnotationPayload): Promise<{
+    status: 'waitingConfirm';
+    runId: string;
+    plans: SchedulePlanOption[];
+    plan?: SchedulePlan;
+    conflicts: { id: string; message: string }[];
+    annotation: {
+      planCardId: string;
+      regionId: string;
+      path: string;
+      previousText: string;
+      nextText: string;
+    };
+  }> {
     if (!runId) throw new Error('缺少 RunId');
-    return { status: 'running' };
+    return request(`/agent/runs/${encodeURIComponent(runId)}/annotation`, {
+      method: 'POST',
+      body: JSON.stringify(annotation)
+    });
   },
 
   async getRun(runId: string, step?: AgentRunStep, rawInput = ''): Promise<AgentRunDetail> {

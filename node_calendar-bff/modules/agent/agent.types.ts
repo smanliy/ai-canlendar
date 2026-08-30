@@ -47,6 +47,42 @@ export interface AgentConflict {
   message: string;
 }
 
+export interface AgentTraceNode {
+  id: string;
+  label?: string;
+  kind?: string;
+  status?: string;
+  detail?: unknown;
+  startedAt?: string;
+  finishedAt?: string | null;
+}
+
+export interface AgentTraceEdge {
+  id?: string;
+  source: string;
+  target: string;
+  label?: string;
+}
+
+export interface AgentTrace {
+  name?: string;
+  status?: string;
+  startedAt?: string;
+  finishedAt?: string | null;
+  request?: unknown;
+  detail?: unknown;
+  nodes?: AgentTraceNode[];
+  edges?: AgentTraceEdge[];
+  events?: Array<Record<string, unknown>>;
+}
+
+export interface TokenUsageSummary {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  model?: string;
+}
+
 export interface PlanItem {
   id: string;
   title: string;
@@ -109,6 +145,8 @@ export interface AgentRunResponse {
   freeWindowsToolResult?: unknown;
   scheduleToolResult?: unknown;
   conflictCheckResult?: unknown;
+  agentTrace?: AgentTrace;
+  llmUsageByStep?: Record<string, TokenUsageSummary>;
 }
 
 export interface AgentClarificationResponse {
@@ -118,12 +156,13 @@ export interface AgentClarificationResponse {
   message: string;
   reasons: string[];
   clarificationJson: Record<string, unknown>;
+  llmUsageByStep?: Record<string, TokenUsageSummary>;
 }
 
 export interface AgentCommandResponse {
   runId: string;
   status: 'commandResult';
-  command: 'clear' | 'compat';
+  command: 'clear' | 'compact';
   message: string;
   summary?: string;
 }
@@ -136,7 +175,22 @@ export interface AgentLlmAnswerResponse {
   reason: string;
 }
 
-export type AgentCreateRunResponse = AgentRunResponse | AgentClarificationResponse | AgentCommandResponse | AgentLlmAnswerResponse;
+export interface AgentAutoCreatedResponse {
+  runId: string;
+  status: 'autoCreated';
+  rawInput: string;
+  message: string;
+  createdCount: number;
+  plan: SchedulePlanOption;
+  calendarEventsToolResult?: unknown;
+  freeWindowsToolResult?: unknown;
+  scheduleToolResult?: unknown;
+  conflictCheckResult?: unknown;
+  agentTrace?: AgentTrace;
+  llmUsageByStep?: Record<string, TokenUsageSummary>;
+}
+
+export type AgentCreateRunResponse = AgentRunResponse | AgentClarificationResponse | AgentCommandResponse | AgentLlmAnswerResponse | AgentAutoCreatedResponse;
 
 export interface AgentDecisionResponse {
   runId: string;
@@ -147,4 +201,23 @@ export interface AgentDecisionResponse {
   scheduleToolResult?: unknown;
   conflictCheckResult?: unknown;
   splitResult?: unknown;
+  agentTrace?: AgentTrace;
+  llmUsageByStep?: Record<string, TokenUsageSummary>;
+}
+
+export interface AgentAnnotationResponse {
+  runId: string;
+  status: 'waitingConfirm';
+  plans: SchedulePlanOption[];
+  plan?: SchedulePlanOption;
+  conflicts: AgentConflict[];
+  llmUsageByStep?: Record<string, TokenUsageSummary>;
+  annotation: {
+    planCardId: string;
+    regionId: string;
+    path: string;
+    previousText: string;
+    nextText: string;
+    warning?: string;
+  };
 }

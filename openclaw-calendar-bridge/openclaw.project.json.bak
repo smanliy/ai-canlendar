@@ -1,0 +1,14 @@
+{
+  "plugins": {
+    "entries": {
+      "calendar-bridge": {
+        "enabled": true,
+        "config": {
+          "baseUrl": "http://127.0.0.1:3000",
+          "defaultUserId": "openclaw-local",
+          "timeoutMs": 15000
+        }
+      }
+    }
+  }
+}

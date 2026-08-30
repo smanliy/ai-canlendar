@@ -1,0 +1,32 @@
+{
+  "name": "openclaw-calendar-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenClaw tool plugin that forwards WeChat requests into the calendar project.",
+  "files": [
+    "dist",
+    "openclaw.plugin.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "plugin:build": "powershell -ExecutionPolicy Bypass -File ./build-openclaw-project.ps1",
+    "plugin:validate": "powershell -ExecutionPolicy Bypass -File ./validate-openclaw-project.ps1",
+    "openclaw:local": "powershell -ExecutionPolicy Bypass -File ./start-openclaw-project.ps1"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.41"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}

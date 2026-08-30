@@ -1,0 +1,88 @@
+{
+  "apiBaseUrl": "http://127.0.0.1:3000/api",
+  "users": {
+    "baseline": "19901675464",
+    "compressed": "19901675809"
+  },
+  "rounds": 0,
+  "manualCompactEvery": 0,
+  "prompts": [],
+  "baselineRun": {
+    "label": "baseline",
+    "compressionEnabled": false,
+    "manualCompactEvery": 0,
+    "checkpoints": [],
+    "finalMetrics": {
+      "settings": {
+        "enabled": false
+      },
+      "samples": [],
+      "summary": {
+        "turnCount": 0,
+        "baselineContextTokens": 0,
+        "compressedContextTokens": 0,
+        "savedTokens": 0,
+        "savedRatio": 0,
+        "totalLlmTokens": 0,
+        "compressionEvents": 0
+      }
+    }
+  },
+  "compressedRun": {
+    "label": "compressed",
+    "compressionEnabled": true,
+    "manualCompactEvery": 0,
+    "checkpoints": [],
+    "finalMetrics": {
+      "settings": {
+        "enabled": true
+      },
+      "samples": [],
+      "summary": {
+        "turnCount": 0,
+        "baselineContextTokens": 0,
+        "compressedContextTokens": 0,
+        "savedTokens": 0,
+        "savedRatio": 0,
+        "totalLlmTokens": 0,
+        "compressionEvents": 0
+      }
+    }
+  },
+  "comparison": {
+    "baseline": {
+      "turnCount": 0,
+      "compressionEvents": 0,
+      "totalLlmTokens": 0,
+      "actualPeak": 0,
+      "actualAverage": 0,
+      "actualP90": 0,
+      "estimatedBaselinePeak": 0,
+      "estimatedBaselineAverage": 0,
+      "estimatedBaselineP90": 0,
+      "latestBaselineContextTokens": 0,
+      "latestCompressedContextTokens": 0,
+      "latestSavedRatio": 0
+    },
+    "compressed": {
+      "turnCount": 0,
+      "compressionEvents": 0,
+      "totalLlmTokens": 0,
+      "actualPeak": 0,
+      "actualAverage": 0,
+      "actualP90": 0,
+      "estimatedBaselinePeak": 0,
+      "estimatedBaselineAverage": 0,
+      "estimatedBaselineP90": 0,
+      "latestBaselineContextTokens": 0,
+      "latestCompressedContextTokens": 0,
+      "latestSavedRatio": 0
+    },
+    "controlledActualPeakDrop": 0,
+    "controlledActualAverageDrop": 0,
+    "controlledActualP90Drop": 0,
+    "compressedRunEstimatedPeakDrop": 0,
+    "compressedRunEstimatedAverageDrop": 0,
+    "compressedRunEstimatedP90Drop": 0
+  }
+}

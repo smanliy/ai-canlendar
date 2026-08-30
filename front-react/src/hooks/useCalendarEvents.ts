@@ -29,6 +29,16 @@ export function useCalendarEvents() {
     void fetchEvents();
   }, [fetchEvents]);
 
+  useEffect(() => {
+    const handleChanged = () => {
+      void fetchEvents();
+    };
+    window.addEventListener('chrono-calendar-events-changed', handleChanged);
+    return () => {
+      window.removeEventListener('chrono-calendar-events-changed', handleChanged);
+    };
+  }, [fetchEvents]);
+
   const createEvent = useCallback(async (payload: EventPayload) => {
     const created = await eventApi.createEvent(payload);
     setEvents((prev) => [...prev, created]);

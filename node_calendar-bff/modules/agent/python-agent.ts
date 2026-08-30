@@ -1,5 +1,6 @@
 import type { AgentUserPreference, ParsedScheduleTask } from './agent.types';
 import type { AgentFieldExtraction } from './field-extractor';
+import type { TokenUsageSummary } from './field-extractor';
 
 export interface PythonAgentPayload {
   userId: string;
@@ -21,6 +22,31 @@ export interface PythonAtomicTask {
     tool?: string;
   }>;
   order: number;
+}
+
+export interface PythonAgentTrace {
+  name?: string;
+  status?: string;
+  startedAt?: string;
+  finishedAt?: string | null;
+  request?: unknown;
+  detail?: unknown;
+  nodes?: Array<{
+    id: string;
+    label?: string;
+    kind?: string;
+    status?: string;
+    detail?: unknown;
+    startedAt?: string;
+    finishedAt?: string | null;
+  }>;
+  edges?: Array<{
+    id?: string;
+    source: string;
+    target: string;
+    label?: string;
+  }>;
+  events?: Array<Record<string, unknown>>;
 }
 
 export interface PythonPlanPayload {
@@ -45,6 +71,15 @@ export interface PythonPlanResult {
   freeWindowsToolResult?: unknown;
   scheduleToolResult?: unknown;
   conflictCheckResult?: unknown;
+  taskShapeDecision?: {
+    decision?: string;
+    reason?: string;
+    suggestedTitle?: string;
+  };
+  agentTrace?: PythonAgentTrace;
+  planTextOverrides?: Record<string, Record<string, string>>;
+  planOverrides?: Record<string, unknown>;
+  llmUsage?: TokenUsageSummary;
 }
 
 export interface PythonResumePayload {
@@ -64,6 +99,8 @@ export interface PythonResumeResult {
   conflictCheckResult?: unknown;
   splitResult?: unknown;
   toolResults?: unknown;
+  agentTrace?: PythonAgentTrace;
+  llmUsage?: TokenUsageSummary;
 }
 
 export interface PythonAgentAck {

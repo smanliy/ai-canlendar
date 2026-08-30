@@ -1,0 +1,26 @@
+{
+  "plugins": {
+    "entries": {
+      "calendar-bridge": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
+        "config": {
+          "baseUrl": "http://127.0.0.1:3000",
+          "defaultUserId": "openclaw-local",
+          "timeoutMs": 15000
+        }
+      }
+    },
+    "load": {
+      "paths": [
+        "E:\\Lenovo\\Documents\\learn\\calendar\\openclaw-calendar-bridge"
+      ]
+    }
+  },
+  "meta": {
+    "lastTouchedVersion": "2026.7.1-2",
+    "lastTouchedAt": "2026-08-27T12:27:11.857Z"
+  }
+}

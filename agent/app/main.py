@@ -1,8 +1,11 @@
 import sys
 from os import environ
 
-from agent.server import run_server
+from dotenv import load_dotenv
 
+load_dotenv()
+
+from agent.server import run_server
 
 HOST = environ.get("PY_AGENT_HOST", "127.0.0.1")
 PORT = int(environ.get("PY_AGENT_PORT", "8001"))

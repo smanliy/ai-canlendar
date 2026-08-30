@@ -77,3 +77,23 @@ export async function bulkCreateEvents(req: Request, res: Response): Promise<voi
     sendError(res, error, '批量创建日程失败');
   }
 }
+
+export async function undoLatestAgentRunEvents(req: Request, res: Response): Promise<void> {
+  try {
+    const data = await eventService.undoLatestAgentRunEvents(getUserId(req));
+    res.json({ code: 0, message: '已撤销最近一次 Agent 写入的日程', data });
+  } catch (error) {
+    sendError(res, error, '撤销 Agent 日程失败');
+  }
+}
+
+export async function undoAgentRunEvents(req: Request, res: Response): Promise<void> {
+  try {
+    const runId = String(req.params.runId || '').trim();
+    if (!runId) throw new Error('runId 不能为空');
+    const data = await eventService.undoAgentRunEvents(getUserId(req), runId);
+    res.json({ code: 0, message: '已撤销该 Agent Run 写入的日程', data });
+  } catch (error) {
+    sendError(res, error, '撤销 Agent 日程失败');
+  }
+}

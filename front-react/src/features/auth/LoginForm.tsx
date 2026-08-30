@@ -31,9 +31,12 @@ export function LoginForm() {
   const handleSendCode = async () => {
     try {
       const phone = await form.validateFields(['phone']).then((values) => values.phone);
-      await sendSmsCode({ phone, scene: mode });
+      const result = await sendSmsCode({ phone, scene: mode });
+      if (result.mockCode) {
+        console.info(`[Mock SMS] ${mode} 验证码：${result.mockCode}，手机号：${phone}`);
+      }
       setCountdown(60);
-      message.success('验证码已发送，请在 Node 后端终端查看 mock code');
+      message.success(result.mockCode ? `开发验证码：${result.mockCode}` : '验证码已发送，请在 Node 后端终端查看 mock code');
     } catch (err) {
       if (err instanceof Error) {
         message.error(err.message);
@@ -88,7 +91,7 @@ export function LoginForm() {
         <Form.Item name="code" label="验证码" rules={[{ required: true, message: '请输入验证码' }]}>
           <Space.Compact className="auth-code-row">
             <Input prefix={<SafetyCertificateOutlined />} placeholder="6 位验证码" maxLength={6} />
-            <Button onClick={() => void handleSendCode()} disabled={countdown > 0}>
+            <Button htmlType="button" onClick={() => void handleSendCode()} disabled={countdown > 0}>
               {countdown > 0 ? `${countdown}s` : '获取验证码'}
             </Button>
           </Space.Compact>

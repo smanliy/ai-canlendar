@@ -129,5 +129,17 @@ export const eventApi = {
       method: 'POST',
       body: JSON.stringify({ events: items, agentRunId })
     });
+  },
+
+  async undoLatestAgentRunEvents(): Promise<{ runId: string; affectedCount: number }> {
+    return request('/events/agent-runs/latest/undo', {
+      method: 'POST'
+    });
+  },
+
+  async undoAgentRunEvents(runId: string): Promise<{ runId: string; affectedCount: number }> {
+    return request(`/events/agent-runs/${encodeURIComponent(runId)}/undo`, {
+      method: 'POST'
+    });
   }
 };

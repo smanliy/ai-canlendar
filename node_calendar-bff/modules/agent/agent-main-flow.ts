@@ -1,33 +1,29 @@
 import { runScheduleAgent } from './agent.orchestrator';
-import type { AgentClarificationResponse, AgentCreateRunResponse, AgentRunResponse, SchedulePlanOption } from './agent.types';
+import type { AgentAutoCreatedResponse, AgentClarificationResponse, AgentCreateRunResponse, AgentRunResponse } from './agent.types';
+import {
+  appendMessage,
+  compactSession,
+  estimateSessionTokens,
+  getCompressionSettings,
+  getSession,
+  maybeAutoCompactSession,
+  maybeMicroCompactSession,
+  consumeLatestCompactionUsage,
+  clearSessionState,
+  recordAgentTurnTokenMetric,
+  rewriteSessionWithSummary,
+  type AgentCompactionEvent,
+  type SchedulingSessionState
+} from './session-compression';
+import * as conversationRepository from './agent-conversation.repository';
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 
-type MessageRole = 'system' | 'user' | 'assistant';
+type SessionCommand = 'clear' | 'compact';
 
-interface MainFlowMessage {
-  role: MessageRole;
-  content: string;
-  createdAt: string;
-}
-
-interface SchedulingSessionState {
-  messages: MainFlowMessage[];
-  summary: string | null;
-  currentRequest: string | null;
-  extractedFields: Record<string, unknown>;
-  missingFields: Record<string, unknown>;
-  toolResults: unknown[];
-  freeTimeSlots: unknown[];
-  planCards: SchedulePlanOption[];
-  selectedPlanCardId: string | null;
-  userAnnotations: unknown[];
-  userConflictApprovals: unknown[];
-  conflicts: unknown[];
-  warnings: unknown[];
-  agentState: unknown | null;
-  pendingFrontendAction: unknown | null;
-  lastCompactedAt: string | null;
+interface ParsedCommand {
+  command: SessionCommand | null;
+  trailingText: string;
 }
 
 interface RouteResult {
@@ -49,7 +45,7 @@ export type AgentMainFlowEvent =
   | { type: 'stepSucceeded'; stepId: string; output?: unknown }
   | { type: 'stepFailed'; stepId: string; output?: unknown }
   | { type: 'directAnswer'; answer: string; reason: string }
-  | { type: 'commandResult'; command: 'clear' | 'compat'; message: string; summary?: string }
+  | { type: 'commandResult'; command: SessionCommand; message: string; summary?: string }
   | { type: 'final'; data: AgentMainFlowResponse };
 
 export type AgentMainFlowEventHandler = (event: AgentMainFlowEvent) => void | Promise<void>;
@@ -57,7 +53,7 @@ export type AgentMainFlowEventHandler = (event: AgentMainFlowEvent) => void | Pr
 export interface AgentCommandResponse {
   runId: string;
   status: 'commandResult';
-  command: 'clear' | 'compat';
+  command: SessionCommand;
   message: string;
   summary?: string;
 }
@@ -72,55 +68,16 @@ export interface AgentLlmAnswerResponse {
 
 export type AgentMainFlowResponse = AgentCreateRunResponse | AgentCommandResponse | AgentLlmAnswerResponse;
 
-const sessions = new Map<string, SchedulingSessionState>();
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function createEmptySession(): SchedulingSessionState {
+function parseCommand(input: string): ParsedCommand {
+  const match = input.trim().match(/^\/(?<command>clear|compact|compat)(?:\s+(?<text>[\s\S]*))?$/i);
+  if (!match?.groups?.command) {
+    return { command: null, trailingText: '' };
+  }
+  const rawCommand = match.groups.command.toLowerCase();
   return {
-    messages: [],
-    summary: null,
-    currentRequest: null,
-    extractedFields: {},
-    missingFields: {},
-    toolResults: [],
-    freeTimeSlots: [],
-    planCards: [],
-    selectedPlanCardId: null,
-    userAnnotations: [],
-    userConflictApprovals: [],
-    conflicts: [],
-    warnings: [],
-    agentState: null,
-    pendingFrontendAction: null,
-    lastCompactedAt: null
+    command: rawCommand === 'clear' ? 'clear' : 'compact',
+    trailingText: (match.groups.text ?? '').trim()
   };
-}
-
-function getSession(userId: string): SchedulingSessionState {
-  const existing = sessions.get(userId);
-  if (existing) return existing;
-  const next = createEmptySession();
-  sessions.set(userId, next);
-  return next;
-}
-
-function replaceSession(userId: string, state: SchedulingSessionState): SchedulingSessionState {
-  sessions.set(userId, state);
-  return state;
-}
-
-function appendMessage(state: SchedulingSessionState, role: MessageRole, content: string): void {
-  state.messages.push({ role, content, createdAt: nowIso() });
-}
-
-function parseCommand(input: string): 'clear' | 'compat' | null {
-  const command = input.trim().toLowerCase();
-  if (command === '/clear') return 'clear';
-  if (command === '/compat') return 'compat';
-  return null;
 }
 
 function getDeepSeekApiKey(): string {
@@ -302,50 +259,7 @@ async function routeUserInput(input: string, state: SchedulingSessionState): Pro
   }
 }
 
-function buildLocalCompactSummary(state: SchedulingSessionState): string {
-  return [
-    state.summary ? `Previous summary: ${state.summary}` : '',
-    state.currentRequest ? `Current request: ${state.currentRequest}` : '',
-    Object.keys(state.extractedFields).length ? `Extracted fields: ${JSON.stringify(state.extractedFields)}` : '',
-    state.planCards.length ? `Plan cards: ${state.planCards.map((plan) => `${plan.name}:${plan.taskName}`).join(', ')}` : '',
-    state.conflicts.length ? `Conflicts: ${JSON.stringify(state.conflicts)}` : '',
-    state.pendingFrontendAction ? `Pending frontend action: ${JSON.stringify(state.pendingFrontendAction)}` : '',
-    `Recent messages: ${state.messages.slice(-6).map((message) => `${message.role}: ${message.content}`).join('\n')}`
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
-async function compactSession(state: SchedulingSessionState): Promise<string> {
-  if (!getDeepSeekApiKey()) return buildLocalCompactSummary(state);
-
-  try {
-    const result = await callDeepSeekJson(
-      [
-        {
-          role: 'system',
-          content: [
-            '你是日程排期 Agent 的上下文压缩器。',
-            '只返回 JSON object：{"summary": "压缩后的记忆"}。',
-            '保留：当前目标、截止时间、预计花费时间、偏好、缺失字段、方案卡、用户选择、批注、冲突允许记录、待办下一步。',
-            '删除：重复对话、过时中间推理、已摘要的原始日志。'
-          ].join('\n')
-        },
-        {
-          role: 'user',
-          content: JSON.stringify(state)
-        }
-      ],
-      2200
-    );
-    return typeof result.summary === 'string' && result.summary.trim() ? result.summary.trim() : buildLocalCompactSummary(state);
-  } catch (error) {
-    console.warn('[Agent Main Flow] LLM compaction failed, using local summary:', error instanceof Error ? error.message : error);
-    return buildLocalCompactSummary(state);
-  }
-}
-
-function mergeAgentResultIntoState(state: SchedulingSessionState, input: string, result: AgentRunResponse | AgentClarificationResponse): void {
+function mergeAgentResultIntoState(state: SchedulingSessionState, input: string, result: AgentRunResponse | AgentClarificationResponse | AgentAutoCreatedResponse): void {
   state.currentRequest = input;
   state.agentState = result;
   if (result.status === 'needsUserInput') {
@@ -359,6 +273,22 @@ function mergeAgentResultIntoState(state: SchedulingSessionState, input: string,
   }
 
   state.missingFields = {};
+  if (result.status === 'autoCreated') {
+    state.planCards = [result.plan];
+    state.selectedPlanCardId = result.plan.id;
+    state.conflicts = [];
+    state.toolResults = [
+      result.calendarEventsToolResult,
+      result.freeWindowsToolResult,
+      result.scheduleToolResult,
+      result.conflictCheckResult
+    ].filter(Boolean);
+    state.freeTimeSlots = [];
+    state.pendingFrontendAction = null;
+    appendMessage(state, 'assistant', result.message);
+    return;
+  }
+
   state.planCards = result.plans;
   state.selectedPlanCardId = result.plan?.id ?? null;
   state.conflicts = result.conflicts;
@@ -377,16 +307,35 @@ async function emitEvent(onEvent: AgentMainFlowEventHandler | undefined, event: 
   await onEvent?.(event);
 }
 
+function buildCompactionEvent(
+  triggerType: 'manual' | 'auto' | 'micro',
+  beforeTokens: number,
+  afterTokens: number,
+  llmUsage?: AgentCompactionEvent['llmUsage']
+): AgentCompactionEvent {
+  const savedTokens = Math.max(0, beforeTokens - afterTokens);
+  return {
+    triggerType,
+    beforeTokens,
+    afterTokens,
+    savedTokens,
+    savedRatio: beforeTokens > 0 ? savedTokens / beforeTokens : 0,
+    thresholdTokens: triggerType === 'auto' ? 7500 : undefined,
+    llmUsage
+  };
+}
+
 export async function runAgentMainFlow({ userId, input, clarificationJson, onEvent }: RunMainFlowInput): Promise<AgentMainFlowResponse> {
   const command = parseCommand(input);
 
-  if (command === 'clear') {
-    replaceSession(userId, createEmptySession());
+  if (command.command === 'clear') {
+    clearSessionState(userId);
+    await conversationRepository.clearConversationMessages(userId);
     const data: AgentCommandResponse = {
       runId: `command-${Date.now()}`,
       status: 'commandResult',
       command: 'clear',
-      message: '已清空当前会话记忆。'
+      message: '已清空当前会话记忆和 Token 账。'
     };
     await emitEvent(onEvent, { type: 'commandResult', command: 'clear', message: data.message });
     await emitEvent(onEvent, { type: 'final', data });
@@ -394,34 +343,66 @@ export async function runAgentMainFlow({ userId, input, clarificationJson, onEve
   }
 
   const state = getSession(userId);
+  const compressionSettings = getCompressionSettings(userId);
+  const turnContextBefore = estimateSessionTokens(state);
+  const microBeforeTokens = turnContextBefore;
+  const microLastCompactedAt = state.lastCompactedAt;
+  const preparedState = await maybeMicroCompactSession(userId, state);
+  const microCompactEvent =
+    preparedState.lastCompactedAt && preparedState.lastCompactedAt !== microLastCompactedAt
+      ? buildCompactionEvent('micro', microBeforeTokens, estimateSessionTokens(preparedState), consumeLatestCompactionUsage(userId))
+      : undefined;
 
-  if (command === 'compat') {
-    const summary = await compactSession(state);
-    const compacted = {
-      ...state,
-      messages: [{ role: 'system' as const, content: `Compressed scheduling memory:\n${summary}`, createdAt: nowIso() }],
-      summary,
-      lastCompactedAt: nowIso()
-    };
-    replaceSession(userId, compacted);
+  if (command.command === 'compact') {
+    const manualBeforeTokens = estimateSessionTokens(preparedState);
+    const { summary, llmUsage } = await compactSession(preparedState, 'manual', command.trailingText);
+    const nextState = await rewriteSessionWithSummary(userId, preparedState, summary, 'manual', command.trailingText);
+    const compactApplied = nextState !== preparedState;
+    const compactEvent = compactApplied ? buildCompactionEvent('manual', manualBeforeTokens, estimateSessionTokens(nextState), llmUsage) : undefined;
     const data: AgentCommandResponse = {
       runId: `command-${Date.now()}`,
       status: 'commandResult',
-      command: 'compat',
-      message: '已压缩上下文，并保留有效排期信息。',
+      command: 'compact',
+      message: !compactApplied
+        ? '本次压缩未降低上下文，已保留原会话状态。'
+        : command.trailingText
+        ? '已压缩上下文，并保留了你补充的要求。'
+        : '已压缩上下文，并保留有效排期信息。',
       summary
     };
-    await emitEvent(onEvent, { type: 'commandResult', command: 'compat', message: data.message, summary });
+    const metricResult = {
+      ...data,
+      llmUsageByStep: llmUsage ? { compaction: llmUsage } : undefined
+    };
+    recordAgentTurnTokenMetric(userId, {
+      runId: data.runId,
+      status: data.status,
+      phase: 'manualCompact',
+      compressionEnabled: compressionSettings.enabled,
+      contextTokensBefore: turnContextBefore,
+      state: nextState,
+      result: metricResult,
+      compactEvent
+    });
+    await emitEvent(onEvent, { type: 'commandResult', command: 'compact', message: data.message, summary });
     await emitEvent(onEvent, { type: 'final', data });
     return data;
   }
 
-  appendMessage(state, 'user', input);
-  const route = await routeUserInput(input, state);
+  appendMessage(preparedState, 'user', input);
+  const autoBeforeTokens = estimateSessionTokens(preparedState);
+  const autoLastCompactedAt = preparedState.lastCompactedAt;
+  const activeState = await maybeAutoCompactSession(userId, preparedState);
+  const autoCompactEvent =
+    activeState.lastCompactedAt && activeState.lastCompactedAt !== autoLastCompactedAt
+      ? buildCompactionEvent('auto', autoBeforeTokens, estimateSessionTokens(activeState), consumeLatestCompactionUsage(userId))
+      : undefined;
+  const compactEvent = autoCompactEvent ?? microCompactEvent;
+  const route = await routeUserInput(input, activeState);
 
   if (!route.needAgent) {
     const answer = route.directAnswer || '这个问题不需要进入排期 Agent。';
-    appendMessage(state, 'assistant', answer);
+    appendMessage(activeState, 'assistant', answer);
     const data: AgentLlmAnswerResponse = {
       runId: `llm-${Date.now()}`,
       status: 'llmAnswer',
@@ -429,13 +410,33 @@ export async function runAgentMainFlow({ userId, input, clarificationJson, onEve
       answer,
       reason: route.reason
     };
+    recordAgentTurnTokenMetric(userId, {
+      runId: data.runId,
+      status: data.status,
+      phase: 'directAnswer',
+      compressionEnabled: compressionSettings.enabled,
+      contextTokensBefore: turnContextBefore,
+      state: activeState,
+      result: data,
+      compactEvent
+    });
     await emitEvent(onEvent, { type: 'directAnswer', answer, reason: route.reason });
     await emitEvent(onEvent, { type: 'final', data });
     return data;
   }
 
   const result = await runScheduleAgent({ userId, input, clarificationJson, onEvent });
-  mergeAgentResultIntoState(state, input, result);
+  mergeAgentResultIntoState(activeState, input, result);
+  recordAgentTurnTokenMetric(userId, {
+    runId: result.runId,
+    status: result.status,
+    phase: 'scheduleAgent',
+    compressionEnabled: compressionSettings.enabled,
+    contextTokensBefore: turnContextBefore,
+    state: activeState,
+    result,
+    compactEvent
+  });
   await emitEvent(onEvent, { type: 'final', data: result });
   return result;
 }

@@ -13,6 +13,7 @@ Use this skill as the local index for the calendar scheduling Agent. Do not put 
 
 - Use `calendar-main-loop` for the end-to-end request flow: user input, command handling, LLM routing, direct answer, Agent path, frontend response, and final write boundary.
 - Use `calendar-command-memory` for `/clear`, `/compat`, single-session memory, context compression, and what to preserve or discard.
+- Use `claude-code-compaction-skill` for long-session compaction, multi-layer context compression, token overflow handling, and session handoff preservation.
 - Use `calendar-field-validation` for required scheduling fields such as deadline and estimated duration, and for returning missing-field requests to Node/frontend.
 - Use `calendar-tool-query` for external lookups, local calendar queries, local free-time search, and tool-call preconditions.
 - Use `calendar-plan-card` for plan-card schemas, generation rules, editable regions, warnings, and frontend display contracts.
@@ -30,7 +31,8 @@ For main-flow work:
 1. Read `calendar-main-loop`.
 2. Read the specific domain skill for the affected flow.
 3. Read `calendar-error-recovery` if the change touches failures, retries, interruption, or fallback.
-4. Read `agent-query-loop-reference` if the work changes core Agent loop architecture or should preserve Claude Code-style implementation ideas.
+4. Read `claude-code-compaction-skill` if the work touches long-session continuity, context overflow, or handoff preservation.
+5. Read `agent-query-loop-reference` if the work changes core Agent loop architecture or should preserve Claude Code-style implementation ideas.
 
 For frontend card work:
 

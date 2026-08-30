@@ -1,14 +1,17 @@
 import { CheckCircleFilled, CloseCircleFilled, GlobalOutlined, LoadingOutlined, SendOutlined } from '@ant-design/icons';
-import { Alert, Button, Input, Space } from 'antd';
+import { Alert, Button, Input } from 'antd';
 
 import { useAgentStore } from '../../stores/agentStore';
-import type { LocalCalendarEvent } from '../../types/agent';
-import { PlanOptionDeck } from './PlanOptionDeck';
+import type { LocalCalendarEvent, TokenUsage } from '../../types/agent';
+// Runtime graph display is intentionally disabled while LangSmith tracing is evaluated.
+// import type { AgentRunStep, AgentTrace } from '../../types/agent';
+// import { AgentTraceGraph } from './AgentTraceGraph';
+import { PlanOptionDeck, type PlanTextAnnotationPayload } from './PlanOptionDeck';
 
 interface AgentChatPanelProps {
   onGenerate: () => Promise<void>;
   onConfirm: () => Promise<void>;
-  onRevise: () => Promise<void>;
+  onAnnotateText?: (payload: PlanTextAnnotationPayload) => Promise<void>;
   onReject: () => void;
   onScheduleDecision: (decision: { optionId: string; taskId: string }) => Promise<void>;
   variant?: 'compact' | 'primary';
@@ -67,6 +70,35 @@ function readStepMessage(output: unknown): string {
   const value = (output as { message?: unknown }).message;
   return typeof value === 'string' ? value : '';
 }
+
+function readStepUsage(step: { llmUsage?: TokenUsage | null; output?: unknown }): TokenUsage | null {
+  if (step.llmUsage) return step.llmUsage;
+  if (!step.output || typeof step.output !== 'object') return null;
+  const usage = (step.output as { llmUsage?: TokenUsage | null }).llmUsage ?? null;
+  return usage;
+}
+
+function formatStepUsage(step: { llmUsage?: TokenUsage | null; output?: unknown }): string {
+  const usage = readStepUsage(step);
+  if (!usage) return '无 LLM';
+  return `${usage.totalTokens} tokens`;
+}
+
+// function readAgentTraceFromOutput(output: unknown): AgentTrace | null {
+//   if (!output || typeof output !== 'object' || !('agentTrace' in output)) return null;
+//   const value = (output as { agentTrace?: unknown }).agentTrace;
+//   if (!value || typeof value !== 'object') return null;
+//   const nodes = (value as { nodes?: unknown }).nodes;
+//   return Array.isArray(nodes) && nodes.length > 0 ? (value as AgentTrace) : null;
+// }
+
+// function readLatestAgentTrace(steps: AgentRunStep[]): AgentTrace | null {
+//   for (const step of [...steps].reverse()) {
+//     const trace = readAgentTraceFromOutput(step.output);
+//     if (trace) return trace;
+//   }
+//   return null;
+// }
 
 function readCalendarEvents(output: unknown): { events: LocalCalendarEvent[]; errors: string[]; args: { startIso?: string; endIso?: string } } {
   if (!output || typeof output !== 'object' || !('calendarEventsResult' in output)) return { events: [], errors: [], args: {} };
@@ -252,9 +284,8 @@ function readScheduleStatus(output: unknown) {
   return errors.length > 0 ? `排期工具处理失败：${errors.join('；')}` : '排期工具处理失败';
 }
 
-export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onScheduleDecision, variant = 'compact' }: AgentChatPanelProps) {
+export function AgentChatPanel({ onGenerate, onConfirm, onAnnotateText, onReject, onScheduleDecision, variant = 'compact' }: AgentChatPanelProps) {
   const userInput = useAgentStore((state) => state.userInput);
-  const revisionInput = useAgentStore((state) => state.revisionInput);
   const runStatus = useAgentStore((state) => state.runStatus);
   const steps = useAgentStore((state) => state.steps);
   const planOptions = useAgentStore((state) => state.planOptions);
@@ -266,12 +297,12 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
   const conversationMessages = useAgentStore((state) => state.conversationMessages);
   const confirmLoading = useAgentStore((state) => state.confirmLoading);
   const setUserInput = useAgentStore((state) => state.setUserInput);
-  const setRevisionInput = useAgentStore((state) => state.setRevisionInput);
   const setClarificationInput = useAgentStore((state) => state.setClarificationInput);
   const selectPlan = useAgentStore((state) => state.selectPlan);
   const loading = runStatus === 'running';
   const visibleSteps = steps.filter((step) => step.status !== 'pending');
   const hasVisibleAgentSteps = visibleSteps.length > 0;
+  // const latestAgentTrace = readLatestAgentTrace(visibleSteps);
   const visibleClarificationReasons = clarification
     ? clarification.reasons.filter((reason) => {
         if (reason.includes('duration') && clarificationInput.duration?.trim()) return false;
@@ -334,17 +365,21 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
           <div className="chat-message assistant">
             <strong>ChronoAgent</strong>
             <div className="agent-step-list">
+              {/* <AgentTraceGraph trace={latestAgentTrace} /> */}
               {visibleSteps.map((step) => (
                 <div className="agent-step-block" key={step.id}>
                   <button className="agent-step-row" type="button">
                     {statusIcon[step.status]}
-                    <span>{step.name}</span>
+                    <span className="agent-step-title">
+                      {step.name}
+                      <small>{formatStepUsage(step)}</small>
+                    </span>
                     <em>{statusLabel[step.status]}</em>
                   </button>
 
                   {step.id === 'step-2' && step.status !== 'pending' && !clarification ? (
                     <div className="agent-tool-trace-panel">
-                      <p>{readStepMessage(step.output) || (step.status === 'running' ? '正在调用 Python Agent 工具查询外部资料' : '等待工具查询结果')}</p>
+                      <p>{readStepMessage(step.output) || (step.status === 'running' ? '正在让 LLM 判断是否需要拆分' : '等待任务形态判断结果')}</p>
                       {readResearchSources(step.output).length > 0 ? (
                         <div className="agent-tool-trace-list">
                           {readResearchSources(step.output).map((source, sourceIndex) => (
@@ -498,20 +533,9 @@ export function AgentChatPanel({ onGenerate, onConfirm, onRevise, onReject, onSc
                         confirmLoading={confirmLoading}
                         onSelectPlan={selectPlan}
                         onConfirm={onConfirm}
-                        onRevise={onRevise}
+                        onAnnotateText={onAnnotateText}
                         onReject={onReject}
                       />
-                      <Space className="chat-plan-actions" wrap>
-                        <Input.TextArea
-                          rows={3}
-                          value={revisionInput}
-                          onChange={(event) => setRevisionInput(event.target.value)}
-                          placeholder="输入修改意见，例如：周三晚上不要安排，尽量放到周末上午"
-                        />
-                        <Button onClick={() => void onRevise()} disabled={confirmLoading || loading}>
-                          提交修改意见并重新生成
-                        </Button>
-                      </Space>
                     </div>
                   ) : null}
 

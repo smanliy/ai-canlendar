@@ -89,3 +89,34 @@ export async function bulkCreateEvents(userId: string, payload: { events: EventP
     payload.events.map((event) => toCreateInput(event, payload.agentRunId ? 'agent' : 'manual', payload.agentRunId))
   );
 }
+
+export async function undoAgentRunEvents(userId: string, agentRunId: string, reason = 'user_undo') {
+  if (!agentRunId.trim()) {
+    throw new Error('agentRunId 不能为空');
+  }
+  const result = await eventRepository.softDeleteEventsByAgentRunId(userId, agentRunId.trim());
+  await eventRepository.createAgentCompensation({
+    userId,
+    runId: agentRunId.trim(),
+    type: 'undo_agent_calendar_events',
+    reason,
+    affectedCount: result.count,
+    payload: { agentRunId: agentRunId.trim() }
+  });
+  if (result.count === 0) {
+    throw new Error('没有找到可撤销的 Agent 日程');
+  }
+  return {
+    runId: agentRunId.trim(),
+    affectedCount: result.count
+  };
+}
+
+export async function undoLatestAgentRunEvents(userId: string) {
+  const latest = await eventRepository.findLatestAgentRunId(userId);
+  const agentRunId = latest?.agentRunId;
+  if (!agentRunId) {
+    throw new Error('没有找到最近可撤销的 Agent 日程');
+  }
+  return undoAgentRunEvents(userId, agentRunId, 'user_undo_latest');
+}

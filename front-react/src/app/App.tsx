@@ -8,6 +8,7 @@ import { AgentWorkspacePage } from '../pages/AgentWorkspacePage';
 import { CalendarWorkspacePage } from '../pages/CalendarWorkspacePage';
 import { LoginPage } from '../pages/LoginPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { TokenMetricsPage } from '../pages/TokenMetricsPage';
 import { useAuthStore } from '../stores/authStore';
 import { Providers } from './providers';
 
@@ -69,6 +70,7 @@ function GuestOnly({ children }: { children: ReactNode }) {
 const pageRoutes: Record<AppPageKey, string> = {
   agentWorkspace: '/agent',
   calendar: '/calendar',
+  tokenMetrics: '/tokens',
   settings: '/settings'
 };
 
@@ -101,6 +103,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <CalendarWorkspacePage activePage="calendar" onNavigate={onNavigate} />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/tokens"
+        element={
+          <RequireAuth>
+            <TokenMetricsPage activePage="tokenMetrics" onNavigate={onNavigate} />
           </RequireAuth>
         }
       />

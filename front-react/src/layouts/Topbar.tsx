@@ -1,7 +1,8 @@
-import { BellOutlined, LeftOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
-import { Avatar, Button, DatePicker, Input, Segmented, Tooltip } from 'antd';
+import { BellOutlined, LeftOutlined, PlusOutlined, RightOutlined, UndoOutlined, UserOutlined } from '@ant-design/icons';
+import { App as AntApp, Avatar, Button, DatePicker, Dropdown, Input, Segmented, Tooltip } from 'antd';
 import dayjs from 'dayjs';
 
+import { eventApi } from '../services/eventApi';
 import { useAuthStore } from '../stores/authStore';
 import type { CalendarView } from '../stores/calendarStore';
 import { useCalendarStore } from '../stores/calendarStore';
@@ -24,11 +25,21 @@ const viewOptions = [
 ];
 
 export function Topbar({ title, subtitle, showCalendarControls, onToday, onPrev, onNext, onCreate }: TopbarProps) {
+  const { message } = AntApp.useApp();
   const currentDate = useCalendarStore((state) => state.currentDate);
   const currentView = useCalendarStore((state) => state.currentView);
   const setCurrentDate = useCalendarStore((state) => state.setCurrentDate);
   const setCurrentView = useCalendarStore((state) => state.setCurrentView);
   const user = useAuthStore((state) => state.user);
+  const handleUndoLatestAgentRun = async () => {
+    try {
+      const result = await eventApi.undoLatestAgentRunEvents();
+      window.dispatchEvent(new Event('chrono-calendar-events-changed'));
+      message.success(`已撤销 ${result.affectedCount} 条 Agent 日程`);
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : '没有可撤销的 Agent 日程');
+    }
+  };
 
   return (
     <header className="topbar">
@@ -61,7 +72,33 @@ export function Topbar({ title, subtitle, showCalendarControls, onToday, onPrev,
         <Tooltip title="通知">
           <Button icon={<BellOutlined />} />
         </Tooltip>
-        <Avatar>{user?.nickname.slice(0, 1) ?? 'U'}</Avatar>
+        <Dropdown
+          trigger={['hover']}
+          menu={{
+            items: [
+              {
+                key: 'profile',
+                icon: <UserOutlined />,
+                label: user?.nickname ?? '当前用户',
+                disabled: true
+              },
+              {
+                type: 'divider'
+              },
+              {
+                key: 'undo-agent-run',
+                icon: <UndoOutlined />,
+                label: '撤销最近 Agent 日程',
+                onClick: handleUndoLatestAgentRun
+              }
+            ]
+          }}
+          placement="bottomRight"
+        >
+          <button className="topbar-user-trigger" type="button" aria-label="用户菜单">
+            <Avatar>{user?.nickname.slice(0, 1) ?? 'U'}</Avatar>
+          </button>
+        </Dropdown>
       </div>
     </header>
   );

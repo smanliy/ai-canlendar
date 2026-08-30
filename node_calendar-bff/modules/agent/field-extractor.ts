@@ -11,6 +11,13 @@ export interface AgentFieldExtraction {
   deadlineIso?: string;
 }
 
+export interface TokenUsageSummary {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  model: string;
+}
+
 interface ExtractFieldsContext {
   nowIso: string;
   userPreference: AgentUserPreference;
@@ -25,6 +32,11 @@ interface DeepSeekChatCompletion {
       reasoning_content?: string | null;
     };
   }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 function readFetchCauseCode(error: unknown): string {
@@ -114,13 +126,32 @@ function parseJsonObject(content: string): unknown {
   }
 }
 
+function readTokenUsage(
+  data: DeepSeekChatCompletion,
+  model: string,
+): TokenUsageSummary | null {
+  const usage = data.usage;
+  const promptTokens = Number(usage?.prompt_tokens);
+  const completionTokens = Number(usage?.completion_tokens);
+  const totalTokens = Number(usage?.total_tokens);
+  if (!Number.isFinite(promptTokens) || !Number.isFinite(completionTokens) || !Number.isFinite(totalTokens)) {
+    return null;
+  }
+  return {
+    promptTokens: Math.max(0, Math.round(promptTokens)),
+    completionTokens: Math.max(0, Math.round(completionTokens)),
+    totalTokens: Math.max(0, Math.round(totalTokens)),
+    model,
+  };
+}
+
 async function requestDeepSeekFieldConversion(
   model: string,
   apiKey: string,
   input: string,
   context: ExtractFieldsContext,
   attempt: number,
-): Promise<{ content: string; rawText: string; finishReason: string; reasoningPreview: string }> {
+): Promise<{ content: string; rawText: string; finishReason: string; reasoningPreview: string; usage: TokenUsageSummary | null }> {
   const body: Record<string, unknown> = {
     model,
     messages: [
@@ -192,13 +223,14 @@ async function requestDeepSeekFieldConversion(
     rawText,
     finishReason: choice?.finish_reason || "",
     reasoningPreview: choice?.message?.reasoning_content?.slice(0, 300) || "",
+    usage: readTokenUsage(data, model),
   };
 }
 
 export async function extractAgentFieldsWithDeepSeek(
   input: string,
   context: ExtractFieldsContext,
-): Promise<AgentFieldExtraction> {
+): Promise<AgentFieldExtraction & { llmUsage?: TokenUsageSummary }> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
 
@@ -208,6 +240,7 @@ export async function extractAgentFieldsWithDeepSeek(
 
   let lastRawText = "";
   let lastFinishReason = "";
+  const usageCalls: TokenUsageSummary[] = [];
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const result = await requestDeepSeekFieldConversion(
@@ -219,11 +252,25 @@ export async function extractAgentFieldsWithDeepSeek(
     );
     lastRawText = result.rawText;
     lastFinishReason = result.finishReason;
+    if (result.usage) {
+      usageCalls.push(result.usage);
+    }
 
     if (result.content.trim()) {
       const normalized = normalizeExtraction(parseJsonObject(result.content));
       console.log("[DeepSeek Field Conversion] converted fields:", normalized);
-      return normalized;
+      return {
+        ...normalized,
+        llmUsage: usageCalls.reduce(
+          (acc, item) => ({
+            promptTokens: acc.promptTokens + item.promptTokens,
+            completionTokens: acc.completionTokens + item.completionTokens,
+            totalTokens: acc.totalTokens + item.totalTokens,
+            model: acc.model || item.model,
+          }),
+          { promptTokens: 0, completionTokens: 0, totalTokens: 0, model },
+        ),
+      };
     }
 
     console.warn("[DeepSeek Field Conversion] Empty content, retrying:", {

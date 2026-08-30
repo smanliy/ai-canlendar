@@ -3,6 +3,69 @@ import type { EventCategory, EventPriority } from './event';
 export type AgentStepStatus = 'pending' | 'running' | 'success' | 'failed';
 export type AgentRunStatus = 'idle' | 'running' | 'success' | 'failed' | 'waitingConfirm' | 'needsUserInput';
 
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  model?: string;
+}
+
+export interface AgentCompressionSettings {
+  enabled: boolean;
+}
+
+export interface AgentCompactionEvent {
+  triggerType: 'manual' | 'auto' | 'micro';
+  beforeTokens: number;
+  afterTokens: number;
+  savedTokens: number;
+  savedRatio: number;
+  thresholdTokens?: number;
+  llmUsage?: TokenUsage;
+}
+
+export interface AgentNodeTokenMetric {
+  nodeId: string;
+  name: string;
+  estimatedPromptTokens: number;
+  actualPromptTokens: number;
+  actualCompletionTokens: number;
+  actualTotalTokens: number;
+  model?: string;
+}
+
+export interface AgentTurnTokenMetric {
+  turnId: number;
+  runId: string;
+  status: string;
+  phase: string;
+  compressionEnabled: boolean;
+  contextTokensBefore: number;
+  contextTokensAfter: number;
+  baselineContextTokens: number;
+  compressedContextTokens: number;
+  savedTokens: number;
+  savedRatio: number;
+  totalLlmTokens: number;
+  compactEvent?: AgentCompactionEvent;
+  nodes: AgentNodeTokenMetric[];
+  createdAt: string;
+}
+
+export interface AgentTokenMetricsSnapshot {
+  settings: AgentCompressionSettings;
+  samples: AgentTurnTokenMetric[];
+  summary: {
+    turnCount: number;
+    baselineContextTokens: number;
+    compressedContextTokens: number;
+    savedTokens: number;
+    savedRatio: number;
+    totalLlmTokens: number;
+    compressionEvents: number;
+  };
+}
+
 export interface AgentRunStep {
   id: string;
   name: string;
@@ -10,6 +73,7 @@ export interface AgentRunStep {
   input?: unknown;
   output?: unknown;
   error?: string;
+  llmUsage?: TokenUsage | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -197,6 +261,35 @@ export interface SchedulePlanOption extends SchedulePlan {
 export interface AgentConflict {
   id: string;
   message: string;
+}
+
+export interface AgentTraceNode {
+  id: string;
+  label?: string;
+  kind?: string;
+  status?: string;
+  detail?: unknown;
+  startedAt?: string;
+  finishedAt?: string | null;
+}
+
+export interface AgentTraceEdge {
+  id?: string;
+  source: string;
+  target: string;
+  label?: string;
+}
+
+export interface AgentTrace {
+  name?: string;
+  status?: string;
+  startedAt?: string;
+  finishedAt?: string | null;
+  request?: unknown;
+  detail?: unknown;
+  nodes?: AgentTraceNode[];
+  edges?: AgentTraceEdge[];
+  events?: Array<Record<string, unknown>>;
 }
 
 export interface AgentRun {

@@ -1,9 +1,18 @@
 import { GlobalOutlined } from '@ant-design/icons';
-import { Button, Tag, Typography } from 'antd';
-import { type CSSProperties, type KeyboardEvent } from 'react';
+import { Button, Input, Tag, Typography } from 'antd';
+import { type CSSProperties, type KeyboardEvent, type MouseEvent, useState } from 'react';
 
 import type { SchedulePlanOption } from '../../types/agent';
 import './PlanOptionDeck.css';
+
+export interface PlanTextAnnotationPayload {
+  planCardId: string;
+  regionId: string;
+  selectedText: string;
+  comment: string;
+  path?: string;
+  kind?: 'title' | 'summary' | 'reason' | 'block_title' | 'block_note';
+}
 
 interface PlanOptionDeckProps {
   plans: SchedulePlanOption[];
@@ -11,7 +20,7 @@ interface PlanOptionDeckProps {
   confirmLoading: boolean;
   onSelectPlan: (planId: string | null) => void;
   onConfirm: () => Promise<void>;
-  onRevise: () => Promise<void>;
+  onAnnotateText?: (payload: PlanTextAnnotationPayload) => Promise<void>;
   onReject: () => void;
 }
 
@@ -23,13 +32,42 @@ interface PlanOptionCardProps {
   confirmLoading: boolean;
   onToggle: () => void;
   onConfirm: () => Promise<void>;
-  onRevise: () => Promise<void>;
   onReject: () => void;
+}
+
+interface TextRegionInfo {
+  id: string;
+  path: string;
+  text: string;
+  kind: 'title' | 'summary' | 'reason' | 'block_title' | 'block_note';
+}
+
+interface ActiveSelection extends Omit<PlanTextAnnotationPayload, 'comment'> {
+  top: number;
+  left: number;
 }
 
 function trimText(value: string | undefined, maxLength: number) {
   const text = (value ?? '').trim();
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function findRegion(plan: SchedulePlanOption, fallback: TextRegionInfo) {
+  return (
+    plan.editableTextRegions?.find((region) => region.kind === fallback.kind && region.path === fallback.path) ??
+    plan.editableTextRegions?.find((region) => region.kind === fallback.kind && region.text === fallback.text) ??
+    fallback
+  );
+}
+
+function buildRegionData(plan: SchedulePlanOption, fallback: TextRegionInfo) {
+  const region = findRegion(plan, fallback);
+  return {
+    'data-plan-card-id': plan.id,
+    'data-region-id': region.id,
+    'data-region-path': region.path,
+    'data-region-kind': region.kind
+  };
 }
 
 function PlanOptionCard({
@@ -40,7 +78,6 @@ function PlanOptionCard({
   confirmLoading,
   onToggle,
   onConfirm,
-  onRevise,
   onReject
 }: PlanOptionCardProps) {
   const isCustomPlan = plan.type === 'custom';
@@ -62,8 +99,26 @@ function PlanOptionCard({
       <div className="deal-card-inner">
         <div className="deal-card-face deal-card-front">
           <div className="deal-card-kicker">{isCustomPlan ? '调整便签' : `方案 ${index + 1}`}</div>
-          <strong>{plan.name}</strong>
-          <p>{plan.summary}</p>
+          <strong
+            {...buildRegionData(plan, {
+              id: `${plan.id}:title`,
+              path: 'name',
+              text: plan.name,
+              kind: 'title'
+            })}
+          >
+            {plan.name}
+          </strong>
+          <p
+            {...buildRegionData(plan, {
+              id: `${plan.id}:summary`,
+              path: 'summary',
+              text: plan.summary ?? '',
+              kind: 'summary'
+            })}
+          >
+            {plan.summary}
+          </p>
           <div className="deal-card-meta">
             <Tag>{plan.totalHours}h</Tag>
             <span>{plan.deadline}</span>
@@ -71,12 +126,22 @@ function PlanOptionCard({
           <div className="deal-card-items">
             {isCustomPlan ? (
               <div className="deal-card-custom-copy">
-                在下方输入你的修改意见，例如“不要安排上午”或“保留周末”，然后提交重新生成。
+                选中需要调整的文字并添加批注。
               </div>
             ) : (
-              plan.items.map((item) => (
+              plan.items.map((item, itemIndex) => (
                 <div key={item.id} className="deal-card-item">
-                  <Typography.Text strong>{item.title}</Typography.Text>
+                  <Typography.Text
+                    strong
+                    {...buildRegionData(plan, {
+                      id: `${plan.id}:item:${item.id}:title`,
+                      path: `items.${itemIndex}.title`,
+                      text: item.title,
+                      kind: 'block_title'
+                    })}
+                  >
+                    {item.title}
+                  </Typography.Text>
                   <span>
                     {item.date} · {item.timeRange} · {item.durationHours}h
                   </span>
@@ -107,8 +172,8 @@ function PlanOptionCard({
             )}
           </div>
           <div className="deal-card-actions" onClick={(event) => event.stopPropagation()}>
-            <Button type="primary" size="small" loading={confirmLoading && selected} onClick={() => void (isCustomPlan ? onRevise() : onConfirm())}>
-              {isCustomPlan ? '提交修改' : '接受'}
+            <Button type="primary" size="small" loading={confirmLoading && selected} onClick={() => void onConfirm()}>
+              接受
             </Button>
             <Button size="small" danger onClick={onReject}>
               拒绝
@@ -120,8 +185,16 @@ function PlanOptionCard({
   );
 }
 
-export function PlanOptionDeck({ plans, selectedPlanId, confirmLoading, onSelectPlan, onConfirm, onRevise, onReject }: PlanOptionDeckProps) {
+function readRegionElement(node: Node | null): HTMLElement | null {
+  const element = node instanceof HTMLElement ? node : node?.parentElement;
+  return element?.closest<HTMLElement>('[data-plan-card-id][data-region-id]') ?? null;
+}
+
+export function PlanOptionDeck({ plans, selectedPlanId, confirmLoading, onSelectPlan, onConfirm, onAnnotateText, onReject }: PlanOptionDeckProps) {
   const hasSelection = Boolean(selectedPlanId);
+  const [activeSelection, setActiveSelection] = useState<ActiveSelection | null>(null);
+  const [annotationDraft, setAnnotationDraft] = useState('');
+  const [annotationOpen, setAnnotationOpen] = useState(false);
 
   const handleTogglePlan = (planId: string) => {
     const nextPlanId = selectedPlanId === planId ? null : planId;
@@ -133,8 +206,63 @@ export function PlanOptionDeck({ plans, selectedPlanId, confirmLoading, onSelect
     onReject();
   };
 
+  const clearAnnotation = () => {
+    setActiveSelection(null);
+    setAnnotationDraft('');
+    setAnnotationOpen(false);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const handleMouseUp = (event: MouseEvent<HTMLDivElement>) => {
+    if (!onAnnotateText) return;
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim() ?? '';
+    if (!selection || selection.rangeCount === 0 || !selectedText) {
+      if (!annotationOpen) setActiveSelection(null);
+      return;
+    }
+
+    const anchorRegion = readRegionElement(selection.anchorNode);
+    const focusRegion = readRegionElement(selection.focusNode);
+    if (!anchorRegion || !focusRegion || anchorRegion.dataset.regionId !== focusRegion.dataset.regionId) {
+      if (!annotationOpen) setActiveSelection(null);
+      return;
+    }
+
+    const planCardId = anchorRegion.dataset.planCardId;
+    const regionId = anchorRegion.dataset.regionId;
+    if (!planCardId || !regionId) return;
+
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    setActiveSelection({
+      planCardId,
+      regionId,
+      selectedText,
+      path: anchorRegion.dataset.regionPath,
+      kind: anchorRegion.dataset.regionKind as ActiveSelection['kind'],
+      top: Math.max(12, rect.top - 42),
+      left: Math.max(12, Math.min(rect.left + rect.width / 2 - 28, window.innerWidth - 88))
+    });
+    setAnnotationOpen(false);
+    event.stopPropagation();
+  };
+
+  const handleSubmitAnnotation = async () => {
+    if (!activeSelection || !annotationDraft.trim() || !onAnnotateText) return;
+    await onAnnotateText({
+      planCardId: activeSelection.planCardId,
+      regionId: activeSelection.regionId,
+      selectedText: activeSelection.selectedText,
+      comment: annotationDraft.trim(),
+      path: activeSelection.path,
+      kind: activeSelection.kind
+    });
+    clearAnnotation();
+  };
+
   return (
-    <div className={`deal-plan-stage count-${plans.length} ${hasSelection ? 'has-selection' : ''}`}>
+    <div className={`deal-plan-stage count-${plans.length} ${hasSelection ? 'has-selection' : ''}`} onMouseUp={handleMouseUp}>
       {plans.map((plan, index) => (
         <PlanOptionCard
           key={plan.id}
@@ -145,10 +273,40 @@ export function PlanOptionDeck({ plans, selectedPlanId, confirmLoading, onSelect
           confirmLoading={confirmLoading}
           onToggle={() => handleTogglePlan(plan.id)}
           onConfirm={onConfirm}
-          onRevise={onRevise}
           onReject={handleReject}
         />
       ))}
+      {activeSelection ? (
+        <div
+          className="deal-annotation-popover"
+          style={{ top: activeSelection.top, left: activeSelection.left }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {annotationOpen ? (
+            <div className="deal-annotation-editor">
+              <Input.TextArea
+                autoFocus
+                rows={3}
+                value={annotationDraft}
+                onChange={(event) => setAnnotationDraft(event.target.value)}
+                placeholder="写下这段的修改意见"
+              />
+              <div className="deal-annotation-editor-actions">
+                <Button size="small" onClick={clearAnnotation}>
+                  取消
+                </Button>
+                <Button size="small" type="primary" disabled={!annotationDraft.trim()} onClick={() => void handleSubmitAnnotation()}>
+                  提交
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button size="small" type="primary" onClick={() => setAnnotationOpen(true)}>
+              批注
+            </Button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "migrate": "npx prisma migrate dev",
     "studio": "npx prisma studio",
-    "events:print": "node scripts/print-events.js"
+    "events:print": "node scripts/print-events.js",
+    "benchmark:tokens": "node scripts/token-compression-benchmark.js"
   },
   "prisma": {
     "schema": "./modules/db/schema.prisma"

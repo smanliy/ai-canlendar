@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 
 import { prisma } from '../db/prisma';
 
@@ -73,4 +74,52 @@ export function bulkCreateEvents(userId: string, data: Array<Omit<Prisma.Calenda
       userId
     }))
   });
+}
+
+export function findLatestAgentRunId(userId: string) {
+  return prisma.calendarEvent.findFirst({
+    where: {
+      userId,
+      source: 'agent',
+      agentRunId: { not: null },
+      deletedAt: null
+    },
+    orderBy: {
+      createdAt: 'desc'
+    },
+    select: {
+      agentRunId: true
+    }
+  });
+}
+
+export function softDeleteEventsByAgentRunId(userId: string, agentRunId: string) {
+  return prisma.calendarEvent.updateMany({
+    where: {
+      userId,
+      agentRunId,
+      source: 'agent',
+      deletedAt: null
+    },
+    data: {
+      deletedAt: new Date()
+    }
+  });
+}
+
+export function createAgentCompensation(input: {
+  userId: string;
+  runId: string;
+  type: string;
+  reason?: string;
+  affectedCount: number;
+  payload?: unknown;
+}) {
+  const id = randomUUID();
+  const payloadJson = input.payload === undefined ? null : JSON.stringify(input.payload);
+  return prisma.$queryRaw`
+    INSERT INTO "AgentCompensation" ("id", "userId", "runId", "type", "status", "reason", "affectedCount", "payload")
+    VALUES (${id}, ${input.userId}, ${input.runId}, ${input.type}, 'succeeded', ${input.reason ?? null}, ${input.affectedCount}, ${payloadJson}::jsonb)
+    RETURNING *
+  `;
 }

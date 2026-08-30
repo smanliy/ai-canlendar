@@ -1,4 +1,4 @@
-import type { AuthResult, LoginPayload, RegisterPayload, SmsCodePayload, User } from '../types/auth';
+import type { AuthResult, LoginPayload, RegisterPayload, SmsCodePayload, SmsCodeResult, User } from '../types/auth';
 
 interface ApiResponse<T> {
   code: number;
@@ -33,9 +33,13 @@ function buildHeaders(options: RequestInit): HeadersInit {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response;
+  const url = `${API_BASE_URL}${path}`;
 
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    if (import.meta.env.DEV && path === '/auth/send-code') {
+      console.info(`[Auth API] send-code -> ${url}`);
+    }
+    response = await fetch(url, {
       ...options,
       credentials: 'include',
       headers: buildHeaders(options)
@@ -67,7 +71,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const authApi = {
-  async sendSmsCode(payload: SmsCodePayload): Promise<{ expiresIn: number; cooldown: number }> {
+  async sendSmsCode(payload: SmsCodePayload): Promise<SmsCodeResult> {
     return request('/auth/send-code', {
       method: 'POST',
       body: JSON.stringify(payload)

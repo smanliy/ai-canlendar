@@ -5,8 +5,10 @@ import express, { type NextFunction, type Request, type Response } from 'express
 
 import { authRoutes } from './modules/auth/auth.route';
 import { agentRoutes } from './modules/agent/agent.route';
+import { openclawBridgeRoutes } from './modules/integrations/openclaw.route';
 import { eventRoutes } from './modules/events/events.routes';
 import { CSRF_COOKIE_NAME, REFRESH_TOKEN_COOKIE_NAME } from './modules/auth/auth.service';
+import { startAgentJobWorker } from './modules/agent/agent-job.worker';
 
 dotenv.config();
 
@@ -64,6 +66,7 @@ app.get('/', (_req: Request, res: Response) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/agent', agentRoutes);
+app.use('/api/integrations/openclaw', openclawBridgeRoutes);
 app.use('/api/events', eventRoutes);
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -76,6 +79,9 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`ChronoAgent BFF listening at http://localhost:${port}`);
+  startAgentJobWorker();
 });
+
+server.ref();

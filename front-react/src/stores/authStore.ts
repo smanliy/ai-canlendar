@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { authApi } from '../services/authApi';
-import type { LoginPayload, RegisterPayload, SmsCodePayload, User } from '../types/auth';
+import type { LoginPayload, RegisterPayload, SmsCodePayload, SmsCodeResult, User } from '../types/auth';
 
 interface AuthState {
   user: User | null;
@@ -14,7 +14,7 @@ interface AuthState {
   checkingAuth: boolean;
   login: (payload: LoginPayload) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
-  sendSmsCode: (payload: SmsCodePayload) => Promise<void>;
+  sendSmsCode: (payload: SmsCodePayload) => Promise<SmsCodeResult>;
   refreshSession: () => Promise<boolean>;
   checkSession: () => Promise<boolean>;
   logout: () => Promise<void>;
@@ -68,7 +68,7 @@ export const useAuthStore = create<AuthState>()(
       }
     },
     sendSmsCode: async (payload) => {
-      await authApi.sendSmsCode(payload);
+      return authApi.sendSmsCode(payload);
     },
     refreshSession: async () => {
       try {

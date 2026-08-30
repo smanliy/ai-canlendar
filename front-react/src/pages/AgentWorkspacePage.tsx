@@ -17,7 +17,7 @@ interface AgentWorkspacePageProps {
 
 export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePageProps) {
   const { events, fetchEvents, createEvent, updateEvent, deleteEvent } = useCalendarEvents();
-  const { generatePlan, confirmPlan, revisePlan, submitScheduleDecision, resetRun } = useAgentRun(fetchEvents);
+  const { generatePlan, confirmPlan, annotateSelectedText, submitScheduleDecision, resetRun } = useAgentRun(fetchEvents);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,7 +62,14 @@ export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePag
           <div className="planner-page planner-page-main">
             <div className="planner-page-tab">agent trace</div>
             <div className="agent-chat-column">
-              <AgentChatPanel variant="primary" onGenerate={generatePlan} onConfirm={confirmPlan} onRevise={revisePlan} onReject={resetRun} onScheduleDecision={submitScheduleDecision} />
+              <AgentChatPanel
+                variant="primary"
+                onGenerate={generatePlan}
+                onConfirm={confirmPlan}
+                onAnnotateText={annotateSelectedText}
+                onReject={resetRun}
+                onScheduleDecision={submitScheduleDecision}
+              />
             </div>
           </div>
           <div className="planner-book-spine" aria-hidden="true">

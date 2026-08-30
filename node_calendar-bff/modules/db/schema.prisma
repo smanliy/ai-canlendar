@@ -24,6 +24,9 @@ model User {
     events                CalendarEvent[]
     agentPlanningSessions AgentPlanningSession[]
     agentMessages         AgentConversationMessage[]
+    agentJobs             AgentJob[]
+    agentCheckpoints      AgentCheckpoint[]
+    agentCompensations    AgentCompensation[]
 }
 
 model SmsCode {
@@ -130,5 +133,97 @@ model AgentConversationMessage {
 
     @@index([userId, createdAt])
     @@index([userId, expiresAt])
+    @@index([runId])
+}
+
+model AgentJob {
+    id          String    @id @default(uuid())
+    runId       String
+    userId      String
+    type        String
+    status      String    @default("queued")
+    idempotencyKey String?
+    input       Json
+    result      Json?
+    error       String?
+    priority    Int       @default(0)
+    attempt     Int       @default(0)
+    maxAttempts Int       @default(3)
+    lockedAt    DateTime?
+    lockedBy    String?
+    heartbeatAt DateTime?
+    startedAt   DateTime?
+    finishedAt  DateTime?
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+
+    user   User            @relation(fields: [userId], references: [id])
+    events AgentJobEvent[]
+
+    @@index([userId, createdAt])
+    @@index([runId])
+    @@index([status, priority, createdAt])
+    @@index([lockedAt])
+    @@unique([userId, idempotencyKey])
+}
+
+model AgentJobEvent {
+    id        String   @id @default(uuid())
+    jobId     String
+    type      String
+    level     String   @default("info")
+    stepId    String?
+    message   String?
+    payload   Json?
+    traceId   String?
+    parentEventId String?
+    durationMs Int?
+    createdAt DateTime @default(now())
+
+    job AgentJob @relation(fields: [jobId], references: [id])
+
+    @@index([jobId, createdAt])
+    @@index([traceId])
+}
+
+model AgentCheckpoint {
+    id            String    @id @default(uuid())
+    runId         String
+    userId        String
+    jobId         String?
+    type          String
+    stepName      String
+    prompt        String
+    options       Json?
+    resumePayload Json?
+    stateSnapshot Json
+    status        String    @default("pending")
+    version       Int       @default(1)
+    expiresAt     DateTime?
+    resolvedAt    DateTime?
+    createdAt     DateTime  @default(now())
+    updatedAt     DateTime  @updatedAt
+
+    user User @relation(fields: [userId], references: [id])
+
+    @@index([runId, status])
+    @@index([userId, status, createdAt])
+    @@index([expiresAt])
+}
+
+model AgentCompensation {
+    id        String   @id @default(uuid())
+    userId    String
+    runId     String
+    type      String
+    status    String   @default("succeeded")
+    reason    String?
+    affectedCount Int   @default(0)
+    payload   Json?
+    createdAt DateTime @default(now())
+
+    user User @relation(fields: [userId], references: [id])
+
+    @@index([userId, createdAt])
     @@index([runId])
 }

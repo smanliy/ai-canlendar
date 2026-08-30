@@ -1,0 +1,36 @@
+{
+  "id": "calendar-bridge",
+  "name": "Calendar Bridge",
+  "description": "Forward OpenClaw requests into the calendar backend.",
+  "version": "0.1.0",
+  "configSchema": {
+    "additionalProperties": false,
+    "type": "object",
+    "properties": {
+      "baseUrl": {
+        "description": "Calendar backend base URL.",
+        "type": "string"
+      },
+      "bridgeToken": {
+        "description": "Shared secret for the bridge endpoint.",
+        "type": "string"
+      },
+      "defaultUserId": {
+        "description": "Fallback user ID for the current account.",
+        "type": "string"
+      },
+      "timeoutMs": {
+        "description": "Bridge timeout in milliseconds.",
+        "type": "number"
+      }
+    }
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "calendar_bridge"
+    ]
+  }
+}

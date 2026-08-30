@@ -4,6 +4,7 @@ import { App as AntApp } from 'antd';
 import { agentApi, type AgentStreamEvent, type ConversationMessagePayload, type SchedulePlanResult } from '../services/agentApi';
 import { eventApi } from '../services/eventApi';
 import { useAgentStore } from '../stores/agentStore';
+import type { PlanTextAnnotationPayload } from '../features/agent/PlanOptionDeck';
 import type { AgentRunStep, CalendarEventsToolResult, ConflictCheckResult, FreeWindowsToolResult, ScheduleToolResult } from '../types/agent';
 import type { EventPayload } from '../types/event';
 
@@ -18,10 +19,8 @@ function appendAndPersistConversationMessage(message: ConversationMessagePayload
   });
 }
 
-function clearPersistedConversationMessages() {
-  void agentApi.clearConversationMessages().catch((error) => {
-    console.error('[Agent Conversation] clear messages failed:', error);
-  });
+function isClearCommand(input: string) {
+  return /^\/clear(?:\s|$)/i.test(input.trim());
 }
 
 function normalizeCalendarEventsResult(value: CalendarEventsToolResult | undefined) {
@@ -145,12 +144,14 @@ function applyFinalResult(result: SchedulePlanResult, prompt: string) {
     return;
   }
 
+  if (result.status === 'autoCreated') {
+    useAgentStore.getState().setCurrentRunId(result.runId);
+    setSubmittedInput(prompt);
+    useAgentStore.getState().setRunStatus('success');
+    return;
+  }
+
   if (result.status === 'commandResult') {
-    if (result.command === 'clear') {
-      useAgentStore.getState().clearConversation();
-      clearPersistedConversationMessages();
-      return;
-    }
     useAgentStore.getState().setRunStatus('success');
   }
 }
@@ -167,10 +168,11 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
       }
 
       const parsedClarification = clarification ? clarificationInput : undefined;
+      const clearCommand = isClearCommand(prompt);
 
       const runId = `run-${Date.now()}`;
       startRun(runId, prompt);
-      if (prompt !== '/clear') {
+      if (!clearCommand) {
         appendAndPersistConversationMessage({
           role: 'user',
           content: prompt,
@@ -227,22 +229,23 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
 
           if (event.type === 'commandResult') {
             if (event.command === 'clear') {
+              await agentApi.clearConversationMessages();
               store.clearConversation();
-              clearPersistedConversationMessages();
-            } else {
-              store.resetRun();
-              store.setSubmittedInput(prompt);
-              store.setRunStatus('running');
-              const commandContent = event.summary ? `${event.message}\n\n${event.summary}` : event.message;
-              await typeDirectAnswer(commandContent, store.setDirectAnswer);
-              appendAndPersistConversationMessage({
-                role: 'assistant',
-                content: commandContent,
-                kind: 'command'
-              });
-              store.setDirectAnswer(null);
-              store.setRunStatus('success');
+              message.success(event.message);
+              return;
             }
+            store.resetRun();
+            store.setSubmittedInput(prompt);
+            store.setRunStatus('running');
+            const commandContent = event.summary ? `${event.message}\n\n${event.summary}` : event.message;
+            await typeDirectAnswer(commandContent, store.setDirectAnswer);
+            appendAndPersistConversationMessage({
+              role: 'assistant',
+              content: commandContent,
+              kind: 'command'
+            });
+            store.setDirectAnswer(null);
+            store.setRunStatus('success');
             message.success(event.message);
             return;
           }
@@ -267,6 +270,12 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
           return;
         }
 
+        if (finalResult.status === 'autoCreated') {
+          message.success(finalResult.message);
+          await onEventsCreated();
+          return;
+        }
+
         if (finalResult.status === 'waitingConfirm') {
           if (finalResult.plans.length > 0) {
             message.success(`已生成 ${finalResult.plans.length} 个排期方案`);
@@ -284,17 +293,28 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
     [message]
   );
 
-  const revisePlan = useCallback(async () => {
-    const { submittedInput, userInput, revisionInput, setRevisionInput } = useAgentStore.getState();
-    if (!revisionInput.trim()) {
-      message.warning('请先输入修改意见');
-      return;
-    }
-    const baseInput = submittedInput || userInput;
-    const combinedInput = `${baseInput}\n修改意见：${revisionInput}`;
-    setRevisionInput('');
-    await generatePlan(combinedInput);
-  }, [generatePlan, message]);
+  const annotateSelectedText = useCallback(
+    async (payload: PlanTextAnnotationPayload) => {
+      const { currentRunId, setPlanOptions } = useAgentStore.getState();
+      if (!payload.comment.trim()) {
+        message.warning('请先输入批注意见');
+        return;
+      }
+      if (!currentRunId) {
+        message.warning('当前没有可修改的 Agent 方案');
+        return;
+      }
+
+      try {
+        const result = await agentApi.submitAnnotation(currentRunId, payload);
+        setPlanOptions(result.plans, result.conflicts);
+        message.success('已按批注局部更新方案');
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '批注局部更新失败');
+      }
+    },
+    [message, onEventsCreated]
+  );
 
   const submitScheduleDecision = useCallback(
     async (decision: { optionId: string; taskId: string }) => {
@@ -318,11 +338,13 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
         updateStep('step-5', 'success', {
           message: successMessage,
           scheduleToolResult: normalizeScheduleResult(result.scheduleToolResult),
-          splitResult: result.splitResult
+          splitResult: result.splitResult,
+          agentTrace: result.agentTrace
         });
         updateStep('step-6', 'success', {
           message: result.conflicts.length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突',
-          conflictCheckResult: normalizeConflictCheckResult(result.conflictCheckResult)
+          conflictCheckResult: normalizeConflictCheckResult(result.conflictCheckResult),
+          agentTrace: result.agentTrace
         });
         setPlanOptions(result.plans, result.conflicts);
         updateStep('step-7', 'success', {
@@ -389,12 +411,11 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
 
   return {
     generatePlan,
-    revisePlan,
+    annotateSelectedText,
     confirmPlan,
     submitScheduleDecision,
     resetRun: useAgentStore.getState().resetRun,
     setUserInput: useAgentStore.getState().setUserInput,
-    setRevisionInput: useAgentStore.getState().setRevisionInput,
     selectPlan: useAgentStore.getState().selectPlan
   };
 }

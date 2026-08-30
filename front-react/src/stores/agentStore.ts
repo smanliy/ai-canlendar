@@ -8,7 +8,6 @@ interface AgentState {
   currentRunId: string | null;
   userInput: string;
   submittedInput: string;
-  revisionInput: string;
   runStatus: AgentRunStatus;
   steps: AgentRunStep[];
   plan: SchedulePlan | null;
@@ -22,7 +21,6 @@ interface AgentState {
   confirmLoading: boolean;
   setUserInput: (value: string) => void;
   setSubmittedInput: (value: string) => void;
-  setRevisionInput: (value: string) => void;
   resetRun: () => void;
   startRun: (runId: string, submittedInput: string) => void;
   setCurrentRunId: (runId: string) => void;
@@ -46,7 +44,6 @@ export const useAgentStore = create<AgentState>()(
     currentRunId: null,
     userInput: '',
     submittedInput: '',
-    revisionInput: '',
     runStatus: 'idle',
     steps: createInitialSteps(),
     plan: null,
@@ -66,10 +63,6 @@ export const useAgentStore = create<AgentState>()(
       set((state) => {
         state.submittedInput = value;
       }),
-    setRevisionInput: (value) =>
-      set((state) => {
-        state.revisionInput = value;
-      }),
     resetRun: () =>
       set((state) => {
         state.currentRunId = null;
@@ -85,7 +78,6 @@ export const useAgentStore = create<AgentState>()(
         state.clarificationInput = {};
         state.directAnswer = null;
         state.confirmLoading = false;
-        state.revisionInput = '';
       }),
     startRun: (runId, submittedInput) =>
       set((state) => {
@@ -167,7 +159,6 @@ export const useAgentStore = create<AgentState>()(
         state.currentRunId = null;
         state.userInput = '';
         state.submittedInput = '';
-        state.revisionInput = '';
         state.runStatus = 'idle';
         state.steps = createInitialSteps();
         state.plan = null;

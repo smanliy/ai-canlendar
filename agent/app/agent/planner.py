@@ -5,8 +5,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from .langsmith_tracing import traceable
+from .tracing import add_edge, add_node, create_trace, finish_node, finish_trace
 from .tools import calculate_free_windows, calendar_events_query, check_schedule_conflicts, research_task_duration, schedule_tasks, web_search_tool
-
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
@@ -104,7 +105,36 @@ def _parse_json_object(content: str) -> dict[str, Any]:
     return value
 
 
-def _request_deepseek_for_atomic_tasks(payload: dict[str, Any], attempt: int) -> dict[str, str]:
+def _empty_usage() -> dict[str, Any]:
+    return {"promptTokens": 0, "completionTokens": 0, "totalTokens": 0, "model": _get_deepseek_model()}
+
+
+def _read_usage(data: dict[str, Any]) -> dict[str, Any]:
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    prompt_tokens = _read_positive_int(usage.get("prompt_tokens"))
+    completion_tokens = _read_positive_int(usage.get("completion_tokens"))
+    total_tokens = _read_positive_int(usage.get("total_tokens"))
+    if prompt_tokens is None or completion_tokens is None or total_tokens is None:
+        return _empty_usage()
+    return {
+        "promptTokens": prompt_tokens,
+        "completionTokens": completion_tokens,
+        "totalTokens": total_tokens,
+        "model": _get_deepseek_model(),
+    }
+
+
+def _merge_usage(target: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "promptTokens": int(target.get("promptTokens", 0)) + int(source.get("promptTokens", 0)),
+        "completionTokens": int(target.get("completionTokens", 0)) + int(source.get("completionTokens", 0)),
+        "totalTokens": int(target.get("totalTokens", 0)) + int(source.get("totalTokens", 0)),
+        "model": str(target.get("model") or source.get("model") or _get_deepseek_model()),
+    }
+
+
+@traceable(name="deepseek_atomic_task_split", run_type="llm")
+def _request_deepseek_for_atomic_tasks(payload: dict[str, Any], attempt: int) -> dict[str, Any]:
     api_key = _get_deepseek_api_key()
     if not api_key:
         raise RuntimeError("DEEPSEEK_API_KEY is not configured for Python planner")
@@ -117,8 +147,10 @@ def _request_deepseek_for_atomic_tasks(payload: dict[str, Any], attempt: int) ->
                 "content": "\n".join(
                     [
                         "你是 Python Agent 的 Plan 层。",
-                        "你必须基于 toolResults 中真实外部网页搜索结果，拆解用户任务本体。",
-                        "先拆原子任务，不要排具体日期时间。",
+                        "你必须基于 toolResults 中真实外部网页搜索结果，判断用户任务是否需要拆解。",
+                        "简单的一次性事件、提醒、会议或很小的原子任务不要强拆，返回 1 个 atomicTask 表示完整工作。",
+                        "只有复杂任务存在多个有意义阶段时才拆成 2 到 6 个 atomicTasks。",
+                        "先给出原子任务，不要排具体日期时间。",
                         "每个原子任务必须有 title、durationRangeMinutes、plannedMinutes、dependsOn、evidence。",
                         "durationRangeMinutes 是 [min,max]，plannedMinutes 取区间中位或更合理值。",
                         "dependsOn 填前置任务 title 数组；没有依赖填空数组。",
@@ -157,16 +189,19 @@ def _request_deepseek_for_atomic_tasks(payload: dict[str, Any], attempt: int) ->
         "finishReason": str(choice.get("finish_reason") or ""),
         "reasoningPreview": str(message.get("reasoning_content") or "")[:300],
         "raw": raw,
+        "usage": _read_usage(data),
     }
 
 
-def _call_deepseek_for_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
-    last_result: dict[str, str] = {}
+def _call_deepseek_for_atomic_tasks(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    last_result: dict[str, Any] = {}
+    total_usage = _empty_usage()
     for attempt in range(1, 4):
         result = _request_deepseek_for_atomic_tasks(payload, attempt)
         last_result = result
+        total_usage = _merge_usage(total_usage, result.get("usage") if isinstance(result.get("usage"), dict) else _empty_usage())
         if result["content"].strip():
-            return _parse_json_object(result["content"])
+            return _parse_json_object(result["content"]), total_usage
 
         print("[Python Agent] DeepSeek planning returned blank content, retrying:")
         print(
@@ -196,6 +231,77 @@ def _call_deepseek_for_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+@traceable(name="deepseek_task_shape_decision", run_type="llm")
+def _request_deepseek_for_task_shape(payload: dict[str, Any]) -> dict[str, Any]:
+    api_key = _get_deepseek_api_key()
+    if not api_key:
+        raise RuntimeError("DEEPSEEK_API_KEY is not configured for Python task shape decision")
+
+    body: dict[str, Any] = {
+        "model": _get_deepseek_model(),
+        "messages": [
+            {
+                "role": "system",
+                "content": "\n".join(
+                    [
+                        "你是日程 Agent 的任务形态判定节点。",
+                        "你只判断用户需求是否需要拆分，不负责排具体时间，不调用工具。",
+                        "如果是洗澡、吃饭、睡觉、开会、提醒、取快递、打电话、跑步等单一生活/事务事项，decision=atomic。",
+                        "如果是报告、论文、学习、复习、开发、设计、调研、备考、项目等由多个阶段组成的工作，decision=needs_decomposition。",
+                        "不要因为用户给了 1 小时就强行拆分；时长长短不是唯一依据，关键看语义上是否有多个必要阶段。",
+                        "只返回 JSON object，不要 markdown。",
+                        'JSON shape: {"decision":"atomic|needs_decomposition","reason":"简短原因","suggestedTitle":"任务标题"}',
+                    ]
+                ),
+            },
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        "temperature": 0,
+        "max_tokens": 800,
+        "thinking": {"type": "disabled"},
+        "stream": False,
+        "response_format": {"type": "json_object"},
+    }
+    request = urllib.request.Request(
+        f"{DEEPSEEK_BASE_URL}/chat/completions",
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+    )
+    with urllib.request.urlopen(request, timeout=25) as response:
+        raw = response.read().decode("utf-8")
+    data = json.loads(raw)
+    choice = data.get("choices", [{}])[0] if isinstance(data.get("choices"), list) else {}
+    message = choice.get("message", {}) if isinstance(choice, dict) else {}
+    return {
+        "content": str(message.get("content") or ""),
+        "usage": _read_usage(data),
+    }
+
+
+def _classify_task_shape_with_llm(raw_input: str, normalized_context: dict[str, Any], user_preference: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    result = _request_deepseek_for_task_shape(
+        {
+            "rawInput": raw_input,
+            "normalizedContext": normalized_context,
+            "userPreference": user_preference,
+        }
+    )
+    content = _parse_json_object(result.get("content", ""))
+    decision = str(content.get("decision") or "").strip()
+    if decision not in {"atomic", "needs_decomposition"}:
+        raise RuntimeError(f"LLM task shape decision invalid: {decision}")
+    return {
+        "decision": decision,
+        "reason": str(content.get("reason") or "").strip(),
+        "suggestedTitle": str(content.get("suggestedTitle") or "").strip(),
+    }, result.get("usage") if isinstance(result.get("usage"), dict) else _empty_usage()
+
+
+@traceable(name="deepseek_task_split", run_type="llm")
 def _request_deepseek_for_task_split(payload: dict[str, Any]) -> dict[str, Any]:
     api_key = _get_deepseek_api_key()
     if not api_key:
@@ -247,7 +353,10 @@ def _request_deepseek_for_task_split(payload: dict[str, Any]) -> dict[str, Any]:
     if not content:
         raise RuntimeError("LLM task split returned blank content")
     try:
-        return _parse_json_object(content)
+        return {
+            "content": _parse_json_object(content),
+            "usage": _read_usage(data),
+        }
     except json.JSONDecodeError as error:
         print("[Python Agent] LLM task split returned invalid JSON:")
         print(
@@ -294,6 +403,74 @@ def _normalize_atomic_tasks(value: Any) -> list[dict[str, Any]]:
             }
         )
     return tasks
+
+
+def _build_single_atomic_task(raw_input: str, normalized_context: dict[str, Any]) -> list[dict[str, Any]]:
+    planned_minutes = _read_positive_int(normalized_context.get("totalMinutes")) or _extract_minutes_from_text(raw_input) or 30
+    title = str(normalized_context.get("taskName") or normalized_context.get("title") or raw_input).strip() or "日程任务"
+    if len(title) > 36:
+        title = title[:36]
+    return [
+        {
+            "title": title,
+            "durationRangeMinutes": [max(1, planned_minutes - 10), planned_minutes + 10],
+            "plannedMinutes": planned_minutes,
+            "dependsOn": [],
+            "evidence": [],
+            "evidenceNote": "简单原子任务无需外部资料，按用户输入和字段抽取结果直接排期。",
+            "order": 1,
+        }
+    ]
+
+
+def _is_simple_atomic_request(raw_input: str, normalized_context: dict[str, Any]) -> bool:
+    text = raw_input.strip()
+    compact_text = re.sub(r"\s+", "", text)
+    total_minutes = _read_positive_int(normalized_context.get("totalMinutes")) or _extract_minutes_from_text(text)
+    complex_keywords = [
+        "报告",
+        "论文",
+        "项目",
+        "开发",
+        "实现",
+        "设计",
+        "调研",
+        "学习",
+        "复习",
+        "备考",
+        "准备",
+        "整理",
+        "制作",
+        "方案",
+        "作业",
+        "考试",
+        "面试",
+        "写",
+    ]
+    simple_keywords = [
+        "洗澡",
+        "洗漱",
+        "吃饭",
+        "早餐",
+        "午饭",
+        "晚饭",
+        "睡觉",
+        "午睡",
+        "跑步",
+        "健身",
+        "散步",
+        "开会",
+        "会议",
+        "看医生",
+        "取快递",
+        "打电话",
+        "提醒",
+    ]
+    has_simple_keyword = any(keyword in compact_text for keyword in simple_keywords)
+    has_complex_keyword = any(keyword in compact_text for keyword in complex_keywords)
+    if has_simple_keyword and not has_complex_keyword:
+        return True
+    return bool(total_minutes and total_minutes <= 120 and len(compact_text) <= 50 and not has_complex_keyword)
 
 
 TASK_TYPE_BASE_WEIGHTS = {
@@ -728,7 +905,7 @@ def _split_single_task_with_llm(
     raw_input: str,
     tool_results: list[dict[str, Any]],
     max_minutes: int,
-) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], list[str], dict[str, Any]]:
     supplemental_results = research_task_duration(str(parent_task.get("title", "")), normalized_context)
     split_payload = {
         "originalGoal": raw_input,
@@ -749,9 +926,11 @@ def _split_single_task_with_llm(
             ]
         },
     }
+    total_usage = _empty_usage()
     try:
         llm_result = _request_deepseek_for_task_split(split_payload)
-        raw_split_tasks = llm_result.get("subtasks")
+        total_usage = _merge_usage(total_usage, llm_result.get("usage") if isinstance(llm_result.get("usage"), dict) else _empty_usage())
+        raw_split_tasks = llm_result.get("content", {}).get("subtasks") if isinstance(llm_result.get("content"), dict) else None
     except Exception as error:  # noqa: BLE001 - fallback keeps the interrupted agent flow alive
         print("[Python Agent] Falling back to deterministic task split after LLM JSON failure:")
         print(str(error), flush=True)
@@ -790,6 +969,7 @@ def _split_single_task_with_llm(
             },
             [*supplemental_results, *reference_tool_results],
             issues,
+            total_usage,
         )
 
     next_atomic_tasks = _replace_one_task_only(atomic_tasks, parent_task, split_tasks)
@@ -800,7 +980,7 @@ def _split_single_task_with_llm(
         "toolResults": [*supplemental_results, *reference_tool_results],
         "budgetAllocation": budget_debug,
     }
-    return next_atomic_tasks, split_result, [*supplemental_results, *reference_tool_results], []
+    return next_atomic_tasks, split_result, [*supplemental_results, *reference_tool_results], [], total_usage
 
 
 def _split_single_task_mechanically(
@@ -963,51 +1143,187 @@ def _check_conflicts_after_schedule(
     return check_schedule_conflicts(draft_allocations, calendar_events, decisions or [])
 
 
+@traceable(name="python_agent_plan", run_type="chain")
 def plan_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
     raw_input = str(payload.get("rawInput", "")).strip()
     normalized_context = payload.get("normalizedContext") if isinstance(payload.get("normalizedContext"), dict) else {}
-    tool_results = research_task_duration(raw_input, normalized_context)
-    print("[Python Agent] Tool results JSON:")
-    print(json.dumps(tool_results, ensure_ascii=False, indent=2), flush=True)
-
-    has_external_evidence = any(result.get("results") for result in tool_results if isinstance(result, dict))
-    if not has_external_evidence:
-        raise RuntimeError("外部网站工具没有取得真实搜索结果，请配置 TAVILY_API_KEY 或检查网络后重试")
-    llm_payload = {
-        "rawInput": raw_input,
-        "normalizedContext": normalized_context,
-        "userPreference": payload.get("userPreference", {}),
-        "toolResults": tool_results,
-        "requiredOutput": {
-            "atomicTasks": [
-                {
-                    "title": "原子子任务",
-                    "durationRangeMinutes": [80, 100],
-                    "plannedMinutes": 90,
-                    "dependsOn": [],
-                    "evidence": [{"title": "来源标题", "url": "https://..."}],
-                }
-            ]
+    trace = create_trace(
+        "python_agent_plan",
+        {
+            "rawInput": raw_input,
+            "normalizedContext": normalized_context,
         },
-    }
-    llm_result = _call_deepseek_for_atomic_tasks(llm_payload)
-    atomic_tasks = enrich_atomic_task_evidence(_normalize_atomic_tasks(llm_result.get("atomicTasks")), tool_results)
+    )
+
+    add_node(trace, "plan.start", "接收排期请求", kind="input", detail={"rawInput": raw_input})
+    finish_node(trace, "plan.start", detail={"hasNormalizedContext": bool(normalized_context)})
+
+    shape_decision: dict[str, Any]
+    shape_usage = _empty_usage()
+    try:
+        shape_decision, shape_usage = _classify_task_shape_with_llm(
+            raw_input,
+            normalized_context,
+            payload.get("userPreference") if isinstance(payload.get("userPreference"), dict) else {},
+        )
+    except Exception as error:
+        shape_decision = {
+            "decision": "atomic" if _is_simple_atomic_request(raw_input, normalized_context) else "needs_decomposition",
+            "reason": f"LLM 任务形态判定失败，使用本地兜底：{error}",
+            "suggestedTitle": "",
+        }
+
+    add_node(trace, "llm.task_shape_decision", "LLM 判断是否需要拆分", kind="llm")
+    add_edge(trace, "plan.start", "llm.task_shape_decision")
+    finish_node(trace, "llm.task_shape_decision", detail=shape_decision)
+
+    if shape_decision.get("decision") == "atomic":
+        tool_results = []
+        llm_usage = shape_usage
+        atomic_context = dict(normalized_context)
+        if shape_decision.get("suggestedTitle"):
+            atomic_context["taskName"] = shape_decision.get("suggestedTitle")
+        add_node(trace, "python.single_atomic_task", "生成单原子任务", kind="python")
+        add_edge(trace, "llm.task_shape_decision", "python.single_atomic_task", label="atomic")
+        atomic_tasks = _build_single_atomic_task(raw_input, atomic_context)
+        finish_node(trace, "python.single_atomic_task", detail={"taskCount": len(atomic_tasks), "reason": shape_decision.get("reason")})
+
+        add_node(trace, "python.normalize_tasks", "规范化原子任务", kind="python")
+        add_edge(trace, "python.single_atomic_task", "python.normalize_tasks")
+    else:
+        add_node(trace, "tools.research_task_duration", "查询外部资料/耗时参考", kind="tool")
+        add_edge(trace, "llm.task_shape_decision", "tools.research_task_duration", label="needs decomposition")
+        tool_results = research_task_duration(raw_input, normalized_context)
+        finish_node(
+            trace,
+            "tools.research_task_duration",
+            detail={
+                "toolResultCount": len(tool_results),
+                "resultCount": sum(len(result.get("results", [])) for result in tool_results if isinstance(result, dict)),
+                "providers": [str(result.get("provider", "")) for result in tool_results if isinstance(result, dict) and result.get("provider")],
+            },
+        )
+        print("[Python Agent] Tool results JSON:")
+        print(json.dumps(tool_results, ensure_ascii=False, indent=2), flush=True)
+
+        has_external_evidence = any(result.get("results") for result in tool_results if isinstance(result, dict))
+        if has_external_evidence:
+            llm_payload = {
+                "rawInput": raw_input,
+                "normalizedContext": normalized_context,
+                "userPreference": payload.get("userPreference", {}),
+                "toolResults": tool_results,
+                "requiredOutput": {
+                    "atomicTasks": [
+                        {
+                            "title": "原子子任务",
+                            "durationRangeMinutes": [80, 100],
+                            "plannedMinutes": 90,
+                            "dependsOn": [],
+                            "evidence": [{"title": "来源标题", "url": "https://..."}],
+                        }
+                    ]
+                },
+            }
+            add_node(trace, "llm.atomic_task_split", "DeepSeek 判断/拆分原子任务", kind="llm")
+            add_edge(trace, "tools.research_task_duration", "llm.atomic_task_split", label="evidence found")
+            llm_result, split_usage = _call_deepseek_for_atomic_tasks(llm_payload)
+            llm_usage = _merge_usage(shape_usage, split_usage)
+            finish_node(trace, "llm.atomic_task_split", detail={"returnedKeys": list(llm_result.keys())})
+
+            add_node(trace, "python.normalize_tasks", "规范化原子任务", kind="python")
+            add_edge(trace, "llm.atomic_task_split", "python.normalize_tasks")
+            atomic_tasks = enrich_atomic_task_evidence(_normalize_atomic_tasks(llm_result.get("atomicTasks")), tool_results)
+        else:
+            llm_usage = shape_usage
+            add_node(trace, "python.single_atomic_task", "简单任务单原子兜底", kind="python")
+            add_edge(trace, "tools.research_task_duration", "python.single_atomic_task", label="no evidence needed")
+            atomic_tasks = _build_single_atomic_task(raw_input, normalized_context)
+            finish_node(trace, "python.single_atomic_task", detail={"taskCount": len(atomic_tasks)})
+
+            add_node(trace, "python.normalize_tasks", "规范化原子任务", kind="python")
+            add_edge(trace, "python.single_atomic_task", "python.normalize_tasks")
+    finish_node(
+        trace,
+        "python.normalize_tasks",
+        detail={
+            "taskCount": len(atomic_tasks),
+            "totalPlannedMinutes": sum(_read_positive_int(task.get("plannedMinutes")) or 0 for task in atomic_tasks),
+        },
+    )
+
+    add_node(trace, "tools.calendar_events_query", "查询已有日程", kind="tool")
+    add_edge(trace, "python.normalize_tasks", "tools.calendar_events_query")
     calendar_events_tool_result = query_existing_calendar_events(payload, normalized_context)
+    finish_node(
+        trace,
+        "tools.calendar_events_query",
+        status="failed" if calendar_events_tool_result.get("errors") else "success",
+        detail={
+            "eventCount": len(calendar_events_tool_result.get("events", [])) if isinstance(calendar_events_tool_result.get("events"), list) else 0,
+            "errors": calendar_events_tool_result.get("errors", []),
+        },
+    )
     print("[Python Agent] Existing calendar events JSON:")
     print(json.dumps(calendar_events_tool_result, ensure_ascii=False, indent=2), flush=True)
+
+    add_node(trace, "tools.calculate_free_windows", "计算空闲窗口", kind="tool")
+    add_edge(trace, "tools.calendar_events_query", "tools.calculate_free_windows")
     free_windows_tool_result = calculate_available_free_windows(payload, calendar_events_tool_result)
+    finish_node(
+        trace,
+        "tools.calculate_free_windows",
+        status="failed" if free_windows_tool_result.get("errors") else "success",
+        detail={
+            "freeWindowCount": len(free_windows_tool_result.get("freeWindows", [])) if isinstance(free_windows_tool_result.get("freeWindows"), list) else 0,
+            "totalFreeMinutes": free_windows_tool_result.get("totalFreeMinutes"),
+            "errors": free_windows_tool_result.get("errors", []),
+        },
+    )
     print("[Python Agent] Free windows result JSON:")
     print(json.dumps(free_windows_tool_result, ensure_ascii=False, indent=2), flush=True)
+
+    add_node(trace, "tools.schedule_tasks", "生成排期草稿", kind="tool")
+    add_edge(trace, "tools.calculate_free_windows", "tools.schedule_tasks")
     schedule_tool_result = schedule_tasks(
         atomic_tasks=atomic_tasks,
         free_windows=free_windows_tool_result.get("freeWindows") if isinstance(free_windows_tool_result.get("freeWindows"), list) else [],
         decisions=[],
     )
     schedule_tool_result = _attach_excluded_availability_note(schedule_tool_result, free_windows_tool_result)
+    schedule_status = str(schedule_tool_result.get("status", ""))
+    finish_node(
+        trace,
+        "tools.schedule_tasks",
+        status="waiting" if schedule_status in {"needsDecision", "pending"} else ("failed" if schedule_status == "failed" else "success"),
+        detail={
+            "status": schedule_status,
+            "draftAllocationCount": len(schedule_tool_result.get("draftAllocations", [])) if isinstance(schedule_tool_result.get("draftAllocations"), list) else 0,
+            "interrupt": schedule_tool_result.get("interrupt"),
+            "errors": schedule_tool_result.get("errors", []),
+        },
+    )
     print("[Python Agent] Schedule result JSON:")
     print(json.dumps(schedule_tool_result, ensure_ascii=False, indent=2), flush=True)
+
+    add_node(trace, "tools.check_schedule_conflicts", "检测排期冲突", kind="tool")
+    add_edge(trace, "tools.schedule_tasks", "tools.check_schedule_conflicts")
     conflict_check_result = _check_conflicts_after_schedule(schedule_tool_result, calendar_events_tool_result, [])
+    finish_node(
+        trace,
+        "tools.check_schedule_conflicts",
+        status="waiting" if conflict_check_result.get("status") in {"needsDecision", "pending"} else ("failed" if conflict_check_result.get("status") == "failed" else "success"),
+        detail={
+            "status": conflict_check_result.get("status"),
+            "summary": conflict_check_result.get("summary"),
+            "errors": conflict_check_result.get("errors", []),
+        },
+    )
+
+    add_node(trace, "python.validate_atomic_plan", "校验原子任务体量", kind="python")
+    add_edge(trace, "tools.check_schedule_conflicts", "python.validate_atomic_plan")
     feasibility = validate_atomic_plan(atomic_tasks, normalized_context)
+    finish_node(trace, "python.validate_atomic_plan", status="success" if feasibility["status"] == "ok" else "failed", detail=feasibility)
     response = {
         "status": "ready" if feasibility["status"] == "ok" else "overloaded",
         "atomicTasks": atomic_tasks,
@@ -1018,17 +1334,31 @@ def plan_atomic_tasks(payload: dict[str, Any]) -> dict[str, Any]:
         "freeWindowsToolResult": free_windows_tool_result,
         "scheduleToolResult": schedule_tool_result,
         "conflictCheckResult": conflict_check_result,
+        "taskShapeDecision": shape_decision,
+        "llmUsage": llm_usage,
+        "agentTrace": finish_trace(trace, status="success" if feasibility["status"] == "ok" else "failed", detail={"responseStatus": "ready" if feasibility["status"] == "ok" else "overloaded"}),
     }
     print("[Python Agent] Atomic plan result:")
     print(json.dumps(response, ensure_ascii=False, indent=2), flush=True)
     return response
 
 
+@traceable(name="python_agent_resume", run_type="chain")
 def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
     decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
     planning_state = payload.get("planningState") if isinstance(payload.get("planningState"), dict) else {}
     option_id = str(decision.get("optionId", "")).strip()
     task_id = str(decision.get("taskId", "")).strip()
+    trace = create_trace(
+        "python_agent_resume",
+        {
+            "decision": decision,
+            "taskId": task_id,
+            "optionId": option_id,
+        },
+    )
+    add_node(trace, "resume.start", "接收继续执行决策", kind="input", detail={"optionId": option_id, "taskId": task_id})
+    finish_node(trace, "resume.start")
     atomic_tasks = planning_state.get("atomicTasks") if isinstance(planning_state.get("atomicTasks"), list) else []
     normalized_context = planning_state.get("normalizedContext") if isinstance(planning_state.get("normalizedContext"), dict) else {}
     tool_results = planning_state.get("toolResults") if isinstance(planning_state.get("toolResults"), list) else []
@@ -1036,8 +1366,12 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
     free_windows_tool_result = planning_state.get("freeWindowsToolResult") if isinstance(planning_state.get("freeWindowsToolResult"), dict) else {}
     free_windows = free_windows_tool_result.get("freeWindows") if isinstance(free_windows_tool_result.get("freeWindows"), list) else []
     schedule_tool_result = planning_state.get("scheduleToolResult") if isinstance(planning_state.get("scheduleToolResult"), dict) else {}
+    llm_usage_total = _empty_usage()
 
     if option_id == "allow_beyond_golden_time":
+        add_node(trace, "resume.allow_beyond_golden_time", "允许使用非黄金时间", kind="decision")
+        add_edge(trace, "resume.start", "resume.allow_beyond_golden_time", label=option_id)
+        finish_node(trace, "resume.allow_beyond_golden_time", detail={"taskId": "*"})
         decisions = [
             {
                 **decision,
@@ -1045,40 +1379,73 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
                 "source": "user_allowed_beyond_golden_time_for_plan",
             }
         ]
+        add_node(trace, "tools.schedule_tasks.resume_allow", "重新排期", kind="tool")
+        add_edge(trace, "resume.allow_beyond_golden_time", "tools.schedule_tasks.resume_allow")
         next_schedule_tool_result = schedule_tasks(
             atomic_tasks=atomic_tasks,
             free_windows=free_windows,
             decisions=decisions,
         )
         next_schedule_tool_result = _attach_excluded_availability_note(next_schedule_tool_result, free_windows_tool_result)
+        finish_node(
+            trace,
+            "tools.schedule_tasks.resume_allow",
+            status="waiting" if next_schedule_tool_result.get("status") in {"needsDecision", "pending"} else ("failed" if next_schedule_tool_result.get("status") == "failed" else "success"),
+            detail={
+                "status": next_schedule_tool_result.get("status"),
+                "draftAllocationCount": len(next_schedule_tool_result.get("draftAllocations", [])) if isinstance(next_schedule_tool_result.get("draftAllocations"), list) else 0,
+                "interrupt": next_schedule_tool_result.get("interrupt"),
+            },
+        )
+        add_node(trace, "tools.check_schedule_conflicts.resume_allow", "检测冲突", kind="tool")
+        add_edge(trace, "tools.schedule_tasks.resume_allow", "tools.check_schedule_conflicts.resume_allow")
         conflict_check_result = _check_conflicts_after_schedule(next_schedule_tool_result, calendar_events_tool_result, decisions)
+        finish_node(
+            trace,
+            "tools.check_schedule_conflicts.resume_allow",
+            status="waiting" if conflict_check_result.get("status") in {"needsDecision", "pending"} else ("failed" if conflict_check_result.get("status") == "failed" else "success"),
+            detail={"status": conflict_check_result.get("status"), "summary": conflict_check_result.get("summary")},
+        )
         response = {
             "status": "ready",
             "atomicTasks": atomic_tasks,
             "scheduleToolResult": next_schedule_tool_result,
             "conflictCheckResult": conflict_check_result,
             "toolResults": tool_results,
+            "llmUsage": llm_usage_total,
+            "agentTrace": finish_trace(trace, status="success", detail={"branch": "allow_beyond_golden_time"}),
         }
         print("[Python Agent] Resume allow non-golden result JSON:")
         print(json.dumps(response, ensure_ascii=False, indent=2), flush=True)
         return response
 
     if option_id != "split_task":
+        add_node(trace, "resume.unsupported", "不支持的继续执行选项", kind="decision", status="failed")
+        add_edge(trace, "resume.start", "resume.unsupported", label=option_id or "empty")
+        finish_node(trace, "resume.unsupported", status="failed", detail={"optionId": option_id})
         return {
             "status": "unsupported",
             "message": f"暂时只实现 split_task，当前 optionId={option_id}",
             "atomicTasks": atomic_tasks,
             "scheduleToolResult": schedule_tool_result,
+            "llmUsage": llm_usage_total,
+            "agentTrace": finish_trace(trace, status="failed", detail={"branch": "unsupported"}),
         }
 
+    add_node(trace, "resume.find_parent_task", "定位需要拆分的任务", kind="python")
+    add_edge(trace, "resume.start", "resume.find_parent_task", label="split_task")
     parent_task = _find_task_by_id_or_title(atomic_tasks, task_id)
     if not parent_task:
+        finish_node(trace, "resume.find_parent_task", status="failed", detail={"taskId": task_id})
         return {
             "status": "failed",
             "message": f"没有找到要拆分的子任务: {task_id}",
             "atomicTasks": atomic_tasks,
             "scheduleToolResult": schedule_tool_result,
+            "llmUsage": llm_usage_total,
+            "agentTrace": finish_trace(trace, status="failed", detail={"branch": "split_task", "reason": "parent_not_found"}),
         }
+    finish_node(trace, "resume.find_parent_task", detail={"parentTaskTitle": parent_task.get("title"), "plannedMinutes": parent_task.get("plannedMinutes")})
 
     raw_input = str(normalized_context.get("rawInput") or planning_state.get("rawInput") or "").strip()
     next_atomic_tasks = atomic_tasks
@@ -1089,9 +1456,15 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
     current_parent_task = parent_task
 
     for round_index in range(1, max_auto_split_rounds + 1):
+        round_node_id = f"resume.split_round_{round_index}"
+        add_node(trace, round_node_id, f"拆分循环第 {round_index} 轮", kind="loop", detail={"parentTaskTitle": current_parent_task.get("title")})
+        add_edge(trace, "resume.find_parent_task" if round_index == 1 else f"tools.schedule_tasks.split_round_{round_index - 1}", round_node_id)
         interrupt = next_schedule_tool_result.get("interrupt") if isinstance(next_schedule_tool_result.get("interrupt"), dict) else {}
         current_max_minutes = _read_interrupt_split_limit(interrupt)
         if current_max_minutes < MIN_EXECUTABLE_MINUTES:
+            finish_node(trace, round_node_id, status="waiting", detail={"reason": "current_max_minutes_below_min_executable", "currentMaxMinutes": current_max_minutes})
+            add_node(trace, "tools.schedule_tasks.auto_allow_after_split", "拆分后自动允许非黄金时间", kind="tool")
+            add_edge(trace, round_node_id, "tools.schedule_tasks.auto_allow_after_split")
             next_schedule_tool_result = schedule_tasks(
                 atomic_tasks=next_atomic_tasks,
                 free_windows=free_windows,
@@ -1104,21 +1477,30 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
                 ],
             )
             next_schedule_tool_result = _attach_excluded_availability_note(next_schedule_tool_result, free_windows_tool_result)
+            finish_node(trace, "tools.schedule_tasks.auto_allow_after_split", detail={"status": next_schedule_tool_result.get("status")})
             break
 
         parent_minutes = _read_positive_int(current_parent_task.get("plannedMinutes")) or current_max_minutes
         if parent_minutes <= current_max_minutes:
+            finish_node(trace, round_node_id, detail={"reason": "parent_fits_current_window", "parentMinutes": parent_minutes, "currentMaxMinutes": current_max_minutes})
             break
 
         if _is_mechanical_slice_task(current_parent_task) or bool(current_parent_task.get("semanticSplitApplied")):
+            split_node_id = f"python.mechanical_split_round_{round_index}"
+            add_node(trace, split_node_id, "机械切片拆分", kind="python", detail={"maxMinutes": current_max_minutes})
+            add_edge(trace, round_node_id, split_node_id)
             updated_tasks, split_result, issues = _split_single_task_mechanically(
                 parent_task=current_parent_task,
                 atomic_tasks=next_atomic_tasks,
                 max_minutes=current_max_minutes,
             )
             supplemental_results = []
+            finish_node(trace, split_node_id, status="failed" if issues else "success", detail={"issues": issues, "subtaskCount": len(split_result.get("subtasks", [])) if isinstance(split_result.get("subtasks"), list) else 0})
         else:
-            updated_tasks, split_result, supplemental_results, issues = _split_single_task_with_llm(
+            split_node_id = f"llm.semantic_split_round_{round_index}"
+            add_node(trace, split_node_id, "LLM 语义拆分任务", kind="llm", detail={"maxMinutes": current_max_minutes})
+            add_edge(trace, round_node_id, split_node_id)
+            updated_tasks, split_result, supplemental_results, issues, split_usage = _split_single_task_with_llm(
                 parent_task=current_parent_task,
                 atomic_tasks=next_atomic_tasks,
                 normalized_context=normalized_context,
@@ -1126,25 +1508,44 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
                 tool_results=all_tool_results,
                 max_minutes=current_max_minutes,
             )
+            llm_usage_total = _merge_usage(llm_usage_total, split_usage)
             all_tool_results.extend(supplemental_results)
+            finish_node(trace, split_node_id, status="failed" if issues else "success", detail={"issues": issues, "subtaskCount": len(split_result.get("subtasks", [])) if isinstance(split_result.get("subtasks"), list) else 0, "supplementalToolResultCount": len(supplemental_results)})
         split_result["round"] = round_index
 
         if issues:
             # If the LLM cannot produce a valid semantic split, keep the latest schedule interrupt
             # instead of failing the whole run. The user can choose another decision path.
             next_schedule_tool_result["errors"] = list(next_schedule_tool_result.get("errors") or []) + issues
+            finish_node(trace, round_node_id, status="failed", detail={"issues": issues})
             break
 
         next_atomic_tasks = updated_tasks
         split_batches.append(split_result)
+        schedule_node_id = f"tools.schedule_tasks.split_round_{round_index}"
+        add_node(trace, schedule_node_id, "拆分后重新排期", kind="tool")
+        add_edge(trace, split_node_id, schedule_node_id)
         next_schedule_tool_result = schedule_tasks(
             atomic_tasks=next_atomic_tasks,
             free_windows=free_windows,
             decisions=[],
         )
         next_schedule_tool_result = _attach_excluded_availability_note(next_schedule_tool_result, free_windows_tool_result)
+        finish_node(
+            trace,
+            schedule_node_id,
+            status="waiting" if next_schedule_tool_result.get("status") in {"needsDecision", "pending"} else ("failed" if next_schedule_tool_result.get("status") == "failed" else "success"),
+            detail={
+                "status": next_schedule_tool_result.get("status"),
+                "interrupt": next_schedule_tool_result.get("interrupt"),
+                "draftAllocationCount": len(next_schedule_tool_result.get("draftAllocations", [])) if isinstance(next_schedule_tool_result.get("draftAllocations"), list) else 0,
+            },
+        )
+        finish_node(trace, round_node_id, detail={"splitMode": split_result.get("splitMode", "semantic_split"), "subtaskCount": len(split_result.get("subtasks", [])) if isinstance(split_result.get("subtasks"), list) else 0})
         next_interrupt = next_schedule_tool_result.get("interrupt") if isinstance(next_schedule_tool_result.get("interrupt"), dict) else {}
         if next_interrupt.get("type") == "task_needs_non_golden_approval":
+            add_node(trace, "tools.schedule_tasks.auto_allow_non_golden", "拆分后自动处理非黄金时间确认", kind="tool")
+            add_edge(trace, schedule_node_id, "tools.schedule_tasks.auto_allow_non_golden")
             next_schedule_tool_result = schedule_tasks(
                 atomic_tasks=next_atomic_tasks,
                 free_windows=free_windows,
@@ -1157,6 +1558,7 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
                 ],
             )
             next_schedule_tool_result = _attach_excluded_availability_note(next_schedule_tool_result, free_windows_tool_result)
+            finish_node(trace, "tools.schedule_tasks.auto_allow_non_golden", detail={"status": next_schedule_tool_result.get("status")})
             break
 
         if not _can_auto_split_interrupt(next_schedule_tool_result):
@@ -1182,7 +1584,16 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
         "splitBatches": split_batches,
         "autoSplitRounds": len(split_batches),
     }
+    add_node(trace, "tools.check_schedule_conflicts.resume_split", "检测拆分后冲突", kind="tool")
+    last_schedule_node = f"tools.schedule_tasks.split_round_{len(split_batches)}" if split_batches else "resume.find_parent_task"
+    add_edge(trace, last_schedule_node, "tools.check_schedule_conflicts.resume_split")
     conflict_check_result = _check_conflicts_after_schedule(next_schedule_tool_result, calendar_events_tool_result, [])
+    finish_node(
+        trace,
+        "tools.check_schedule_conflicts.resume_split",
+        status="waiting" if conflict_check_result.get("status") in {"needsDecision", "pending"} else ("failed" if conflict_check_result.get("status") == "failed" else "success"),
+        detail={"status": conflict_check_result.get("status"), "summary": conflict_check_result.get("summary")},
+    )
     response = {
         "status": "ready",
         "atomicTasks": next_atomic_tasks,
@@ -1190,6 +1601,8 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
         "conflictCheckResult": conflict_check_result,
         "splitResult": split_result,
         "toolResults": all_tool_results,
+        "llmUsage": llm_usage_total,
+        "agentTrace": finish_trace(trace, status="success", detail={"branch": "split_task", "autoSplitRounds": len(split_batches)}),
     }
     print("[Python Agent] Resume auto split result JSON:")
     print(json.dumps(response, ensure_ascii=False, indent=2), flush=True)

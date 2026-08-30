@@ -14,6 +14,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo
 
+from .langsmith_tracing import traceable
+
 
 MIN_SCHEDULABLE_WINDOW_MINUTES = 20
 
@@ -243,6 +245,7 @@ def _duckduckgo_search(query: str, limit: int) -> list[dict[str, str]]:
     return parser.results[:limit]
 
 
+@traceable(name="web_search", run_type="tool")
 def web_search_tool(query: str, limit: int = 5) -> dict[str, Any]:
     print(f"[Python Agent Tool] web_search query={query}", flush=True)
     errors: list[str] = []
@@ -448,6 +451,7 @@ def _print_calendar_events_table(user_id: str, events: list[dict[str, Any]]) -> 
         )
 
 
+@traceable(name="calendar_events_query", run_type="tool")
 def calendar_events_query(user_id: str, start_iso: str, end_iso: str) -> dict[str, Any]:
     print(
         f"[Python Agent Tool] calendar_events_query userId={user_id} startIso={start_iso} endIso={end_iso}",
@@ -622,6 +626,7 @@ def _split_and_label_free_segment(
     return windows
 
 
+@traceable(name="calculate_free_windows", run_type="tool")
 def calculate_free_windows(
     start_iso: str,
     end_iso: str,
@@ -1123,6 +1128,7 @@ def _build_non_golden_approval_interrupt(
     }
 
 
+@traceable(name="schedule_tasks", run_type="tool")
 def schedule_tasks(
     atomic_tasks: list[dict[str, Any]],
     free_windows: list[dict[str, Any]],
@@ -1257,6 +1263,7 @@ def _is_approved_overlap(allocation: dict[str, Any], decisions: list[dict[str, A
     )
 
 
+@traceable(name="check_schedule_conflicts", run_type="tool")
 def check_schedule_conflicts(
     draft_allocations: list[dict[str, Any]],
     calendar_events: list[dict[str, Any]],
@@ -1520,5 +1527,6 @@ def build_research_queries(raw_input: str, normalized_context: dict[str, Any]) -
     return list(dict.fromkeys(queries))[:4]
 
 
+@traceable(name="research_task_duration", run_type="tool")
 def research_task_duration(raw_input: str, normalized_context: dict[str, Any]) -> list[dict[str, Any]]:
     return [web_search_tool(query, limit=4) for query in build_research_queries(raw_input, normalized_context)]
