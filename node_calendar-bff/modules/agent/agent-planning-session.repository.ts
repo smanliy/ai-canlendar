@@ -74,3 +74,10 @@ export async function updatePlanningSessionAtomicPlan(
     }
   });
 }
+
+export async function clearPlanningSessionsByUser(userId: string): Promise<number> {
+  return prisma.$executeRaw`
+    DELETE FROM "AgentPlanningSession"
+    WHERE "userId" = ${userId}
+  `;
+}

@@ -1,6 +1,7 @@
 export interface CreateAgentRunPayload {
   input: string;
   clarificationJson?: unknown;
+  forceNew?: boolean;
 }
 
 export function validateCreateAgentRunPayload(payload: unknown): CreateAgentRunPayload {
@@ -10,6 +11,7 @@ export function validateCreateAgentRunPayload(payload: unknown): CreateAgentRunP
 
   const input = (payload as { input?: unknown }).input;
   const clarificationJson = (payload as { clarificationJson?: unknown }).clarificationJson;
+  const forceNew = (payload as { forceNew?: unknown }).forceNew;
   if (typeof input !== 'string' || !input.trim()) {
     throw new Error('Input is required');
   }
@@ -20,7 +22,8 @@ export function validateCreateAgentRunPayload(payload: unknown): CreateAgentRunP
 
   return {
     input: input.trim(),
-    clarificationJson
+    clarificationJson,
+    forceNew: typeof forceNew === 'boolean' ? forceNew : undefined
   };
 }
 

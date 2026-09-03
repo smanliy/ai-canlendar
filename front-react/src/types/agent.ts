@@ -93,6 +93,75 @@ export interface AgentConversationMessage {
   createdAt: string;
 }
 
+export type AgentJobType = 'schedule_plan' | 'resume_decision' | 'annotate_plan';
+export type AgentJobStatus = 'queued' | 'running' | 'waiting_user' | 'succeeded' | 'failed' | 'canceled';
+
+export interface AgentJob {
+  id: string;
+  runId: string;
+  userId: string;
+  type: AgentJobType;
+  status: AgentJobStatus;
+  idempotencyKey: string | null;
+  input: unknown;
+  result: unknown | null;
+  error: string | null;
+  priority: number;
+  attempt: number;
+  maxAttempts: number;
+  lockedAt: string | null;
+  lockedBy: string | null;
+  heartbeatAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentJobEvent {
+  id: string;
+  jobId: string;
+  type: string;
+  level: 'info' | 'warn' | 'error' | string;
+  stepId: string | null;
+  message: string | null;
+  payload: unknown | null;
+  traceId: string | null;
+  parentEventId: string | null;
+  durationMs: number | null;
+  createdAt: string;
+}
+
+export interface AgentCheckpoint {
+  id: string;
+  runId: string;
+  userId: string;
+  jobId: string | null;
+  type: 'required_fields' | 'schedule_decision' | 'conflict_decision' | 'final_confirm' | 'annotation_review';
+  stepName: string;
+  prompt: string;
+  options: unknown | null;
+  resumePayload: unknown | null;
+  stateSnapshot: unknown;
+  status: 'pending' | 'resolved' | 'expired' | 'canceled';
+  version: number;
+  expiresAt: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentJobSummary {
+  eventCount: number;
+  errorCount: number;
+  durationMs: number;
+}
+
+export interface AgentJobDetail extends AgentJob {
+  checkpoint: AgentCheckpoint | null;
+  eventSummary: AgentJobSummary;
+}
+
 export interface AgentUserPreference {
   preferredStartTime: string;
   preferredEndTime: string;

@@ -123,6 +123,33 @@ openclawBridgeRoutes.post('/bridge', async (req, res) => {
         res.status(200).json({ code: 0, message: 'ok', data: { events } });
         return;
       }
+      case 'update_event': {
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('payload is required for update_event');
+        const record = payload as Record<string, unknown>;
+        const eventId = String(record.eventId || '').trim();
+        const title = String(record.title || '').trim();
+        const startTime = String(record.startTime || '').trim();
+        const endTime = String(record.endTime || '').trim();
+        if (!eventId) throw new Error('payload.eventId is required for update_event');
+        if (!title) throw new Error('payload.title is required for update_event');
+        if (!startTime || Number.isNaN(Date.parse(startTime))) throw new Error('payload.startTime must be a valid ISO datetime string');
+        if (!endTime || Number.isNaN(Date.parse(endTime))) throw new Error('payload.endTime must be a valid ISO datetime string');
+        const data = await eventService.updateEvent(userId, eventId, {
+          title,
+          startTime,
+          endTime
+        });
+        res.status(200).json({ code: 0, message: 'ok', data });
+        return;
+      }
+      case 'delete_event': {
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('payload is required for delete_event');
+        const eventId = String((payload as Record<string, unknown>).eventId || '').trim();
+        if (!eventId) throw new Error('payload.eventId is required for delete_event');
+        await eventService.deleteEvent(userId, eventId);
+        res.status(200).json({ code: 0, message: 'ok', data: { deleted: true, eventId } });
+        return;
+      }
       default:
         res.status(400).json({ code: 400, message: `Unsupported action: ${action}`, data: null });
     }

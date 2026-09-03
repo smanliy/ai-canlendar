@@ -21,6 +21,7 @@ interface AgentState {
   confirmLoading: boolean;
   setUserInput: (value: string) => void;
   setSubmittedInput: (value: string) => void;
+  setSteps: (steps: AgentRunStep[]) => void;
   resetRun: () => void;
   startRun: (runId: string, submittedInput: string) => void;
   setCurrentRunId: (runId: string) => void;
@@ -62,6 +63,10 @@ export const useAgentStore = create<AgentState>()(
     setSubmittedInput: (value) =>
       set((state) => {
         state.submittedInput = value;
+      }),
+    setSteps: (steps) =>
+      set((state) => {
+        state.steps = steps;
       }),
     resetRun: () =>
       set((state) => {

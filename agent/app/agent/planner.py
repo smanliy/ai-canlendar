@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import unicodedata
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -423,6 +424,14 @@ def _build_single_atomic_task(raw_input: str, normalized_context: dict[str, Any]
     ]
 
 
+def _normalize_task_lookup_key(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    if not text:
+        return ""
+    text = re.sub(r"[\s\W_]+", "", text, flags=re.UNICODE)
+    return text.casefold()
+
+
 def _is_simple_atomic_request(raw_input: str, normalized_context: dict[str, Any]) -> bool:
     text = raw_input.strip()
     compact_text = re.sub(r"\s+", "", text)
@@ -826,16 +835,31 @@ def _replace_one_task_only(atomic_tasks: list[dict[str, Any]], parent_task: dict
 
 
 def _find_task_by_id_or_title(atomic_tasks: list[dict[str, Any]], task_id: str) -> dict[str, Any] | None:
+    normalized_task_id = _normalize_task_lookup_key(task_id)
+    fuzzy_matches: list[dict[str, Any]] = []
     for task in atomic_tasks:
         if not isinstance(task, dict):
             continue
         candidates = [
             str(task.get("id", "")),
             str(task.get("title", "")),
+            str(task.get("taskId", "")),
             f"task-{task.get('order', '')}",
         ]
         if task_id in candidates:
             return task
+        normalized_candidates = [_normalize_task_lookup_key(candidate) for candidate in candidates]
+        if normalized_task_id and normalized_task_id in normalized_candidates:
+            return task
+        if normalized_task_id:
+            for candidate in normalized_candidates:
+                if not candidate:
+                    continue
+                if normalized_task_id in candidate or candidate in normalized_task_id:
+                    fuzzy_matches.append(task)
+                    break
+    if len(fuzzy_matches) == 1:
+        return fuzzy_matches[0]
     return None
 
 
@@ -1436,10 +1460,16 @@ def resume_schedule_decision(payload: dict[str, Any]) -> dict[str, Any]:
     add_edge(trace, "resume.start", "resume.find_parent_task", label="split_task")
     parent_task = _find_task_by_id_or_title(atomic_tasks, task_id)
     if not parent_task:
+        available_titles = [
+            str(task.get("title", ""))
+            for task in atomic_tasks
+            if isinstance(task, dict) and str(task.get("title", "")).strip()
+        ]
         finish_node(trace, "resume.find_parent_task", status="failed", detail={"taskId": task_id})
         return {
             "status": "failed",
             "message": f"没有找到要拆分的子任务: {task_id}",
+            "hint": f"当前可用子任务示例: {', '.join(available_titles[:5])}" if available_titles else "当前 atomicTasks 为空",
             "atomicTasks": atomic_tasks,
             "scheduleToolResult": schedule_tool_result,
             "llmUsage": llm_usage_total,

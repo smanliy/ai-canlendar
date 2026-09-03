@@ -3,7 +3,14 @@ import { randomUUID } from 'crypto';
 
 import { prisma } from '../db/prisma';
 
-export function findEventsByRange(userId: string, start?: Date, end?: Date) {
+type DbClient = typeof prisma | Prisma.TransactionClient;
+
+function getDb(db?: DbClient) {
+  return db ?? prisma;
+}
+
+export function findEventsByRange(userId: string, start?: Date, end?: Date, db?: DbClient) {
+  const client = getDb(db);
   const timeWhere: Prisma.CalendarEventWhereInput =
     start && end
       ? {
@@ -12,7 +19,7 @@ export function findEventsByRange(userId: string, start?: Date, end?: Date) {
         }
       : {};
 
-  return prisma.calendarEvent.findMany({
+  return client.calendarEvent.findMany({
     where: {
       userId,
       deletedAt: null,
@@ -24,8 +31,9 @@ export function findEventsByRange(userId: string, start?: Date, end?: Date) {
   });
 }
 
-export function findEventById(userId: string, id: string) {
-  return prisma.calendarEvent.findFirst({
+export function findEventById(userId: string, id: string, db?: DbClient) {
+  const client = getDb(db);
+  return client.calendarEvent.findFirst({
     where: {
       id,
       userId,
@@ -34,8 +42,9 @@ export function findEventById(userId: string, id: string) {
   });
 }
 
-export function createEvent(userId: string, data: Omit<Prisma.CalendarEventUncheckedCreateInput, 'userId'>) {
-  return prisma.calendarEvent.create({
+export function createEvent(userId: string, data: Omit<Prisma.CalendarEventUncheckedCreateInput, 'userId'>, db?: DbClient) {
+  const client = getDb(db);
+  return client.calendarEvent.create({
     data: {
       ...data,
       userId
@@ -43,8 +52,9 @@ export function createEvent(userId: string, data: Omit<Prisma.CalendarEventUnche
   });
 }
 
-export function updateEvent(userId: string, id: string, data: Prisma.CalendarEventUncheckedUpdateInput) {
-  return prisma.calendarEvent.updateMany({
+export function updateEvent(userId: string, id: string, data: Prisma.CalendarEventUncheckedUpdateInput, db?: DbClient) {
+  const client = getDb(db);
+  return client.calendarEvent.updateMany({
     where: {
       id,
       userId,
@@ -54,8 +64,9 @@ export function updateEvent(userId: string, id: string, data: Prisma.CalendarEve
   });
 }
 
-export function softDeleteEvent(userId: string, id: string) {
-  return prisma.calendarEvent.updateMany({
+export function softDeleteEvent(userId: string, id: string, db?: DbClient) {
+  const client = getDb(db);
+  return client.calendarEvent.updateMany({
     where: {
       id,
       userId,
@@ -67,8 +78,9 @@ export function softDeleteEvent(userId: string, id: string) {
   });
 }
 
-export function bulkCreateEvents(userId: string, data: Array<Omit<Prisma.CalendarEventCreateManyInput, 'userId'>>) {
-  return prisma.calendarEvent.createManyAndReturn({
+export function bulkCreateEvents(userId: string, data: Array<Omit<Prisma.CalendarEventCreateManyInput, 'userId'>>, db?: DbClient) {
+  const client = getDb(db);
+  return client.calendarEvent.createManyAndReturn({
     data: data.map((item) => ({
       ...item,
       userId
@@ -76,8 +88,9 @@ export function bulkCreateEvents(userId: string, data: Array<Omit<Prisma.Calenda
   });
 }
 
-export function findLatestAgentRunId(userId: string) {
-  return prisma.calendarEvent.findFirst({
+export function findLatestAgentRunId(userId: string, db?: DbClient) {
+  const client = getDb(db);
+  return client.calendarEvent.findFirst({
     where: {
       userId,
       source: 'agent',
@@ -93,8 +106,9 @@ export function findLatestAgentRunId(userId: string) {
   });
 }
 
-export function softDeleteEventsByAgentRunId(userId: string, agentRunId: string) {
-  return prisma.calendarEvent.updateMany({
+export function softDeleteEventsByAgentRunId(userId: string, agentRunId: string, db?: DbClient) {
+  const client = getDb(db);
+  return client.calendarEvent.updateMany({
     where: {
       userId,
       agentRunId,

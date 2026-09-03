@@ -160,3 +160,45 @@ export async function resolveCheckpoint(input: {
   });
   return resolved as AgentCheckpointRecord;
 }
+
+export async function expirePendingCheckpoints(staleBefore: Date): Promise<Array<{ id: string; jobId: string | null }>> {
+  const checkpoints = await prisma.agentCheckpoint.findMany({
+    where: {
+      status: 'pending',
+      expiresAt: {
+        lt: staleBefore
+      }
+    },
+    select: {
+      id: true,
+      jobId: true
+    }
+  });
+
+  if (checkpoints.length === 0) return [];
+
+  await prisma.agentCheckpoint.updateMany({
+    where: {
+      id: {
+        in: checkpoints.map((item) => item.id)
+      }
+    },
+    data: {
+      status: 'expired',
+      resolvedAt: new Date()
+    }
+  });
+
+  return checkpoints.map((item) => ({ id: item.id, jobId: item.jobId }));
+}
+
+export async function cancelPendingCheckpointsByUser(userId: string): Promise<number> {
+  return prisma.$executeRaw`
+    UPDATE "AgentCheckpoint"
+    SET "status" = 'canceled',
+        "resolvedAt" = now(),
+        "updatedAt" = now()
+    WHERE "userId" = ${userId}
+      AND "status" = 'pending'
+  `;
+}

@@ -142,7 +142,7 @@ export async function createJob(req: Request, res: Response): Promise<void> {
     }
 
     const payload = validateCreateAgentRunPayload(req.body);
-    const data = await agentService.createScheduleJob(req.user.id, payload.input, payload.clarificationJson);
+    const data = await agentService.createScheduleJob(req.user.id, payload.input, payload.clarificationJson, payload.forceNew ?? false);
 
     res.status(202).json({
       code: 0,

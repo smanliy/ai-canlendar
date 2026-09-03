@@ -198,6 +198,34 @@ export async function cancelAgentJob(jobId: string, userId: string): Promise<voi
   `;
 }
 
+export async function cancelAgentJobById(jobId: string): Promise<void> {
+  await prisma.$executeRaw`
+    UPDATE "AgentJob"
+    SET "status" = 'canceled',
+        "lockedAt" = NULL,
+        "lockedBy" = NULL,
+        "heartbeatAt" = NULL,
+        "finishedAt" = now(),
+        "updatedAt" = now()
+    WHERE "id" = ${jobId}
+      AND "status" IN ('queued', 'running', 'waiting_user')
+  `;
+}
+
+export async function cancelActiveAgentJobsByUser(userId: string): Promise<number> {
+  return prisma.$executeRaw`
+    UPDATE "AgentJob"
+    SET "status" = 'canceled',
+        "lockedAt" = NULL,
+        "lockedBy" = NULL,
+        "heartbeatAt" = NULL,
+        "finishedAt" = now(),
+        "updatedAt" = now()
+    WHERE "userId" = ${userId}
+      AND "status" IN ('queued', 'running', 'waiting_user')
+  `;
+}
+
 export async function appendAgentJobEvent(input: {
   jobId: string;
   type: string;

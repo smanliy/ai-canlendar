@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { AgentChatPanel } from '../features/agent/AgentChatPanel';
 import { AgentContextPanel } from '../features/agent/AgentContextPanel';
 import { EventModal } from '../features/calendar/EventModal';
-import { useAgentRun } from '../hooks/useAgentRun';
+import { restoreAgentRunFromJob, useAgentRun } from '../hooks/useAgentRun';
 import { useCalendarEvents } from '../hooks/useCalendarEvents';
 import { AppLayout } from '../layouts/AppLayout';
 import { agentApi } from '../services/agentApi';
@@ -22,15 +22,38 @@ export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePag
   useEffect(() => {
     let cancelled = false;
 
-    agentApi
-      .listConversationMessages()
-      .then((messages) => {
-        if (!cancelled && useAgentStore.getState().conversationMessages.length === 0) {
+    void Promise.all([agentApi.listConversationMessages(), agentApi.listJobs()])
+      .then(async ([messages, jobs]) => {
+        if (cancelled) return;
+        if (useAgentStore.getState().conversationMessages.length === 0) {
           useAgentStore.getState().hydrateConversationMessages(messages);
+        }
+
+        for (const job of jobs) {
+          if (!['running', 'waiting_user'].includes(job.status)) continue;
+
+          const detail = await agentApi.getJob(job.id);
+          if (cancelled) return;
+
+          const checkpoint = detail.checkpoint;
+          const checkpointExpired = checkpoint?.expiresAt ? new Date(checkpoint.expiresAt).getTime() < Date.now() : false;
+
+          if (checkpointExpired && detail.status === 'waiting_user') {
+            await agentApi.cancelJob(detail.id);
+            continue;
+          }
+
+          if (detail.status === 'waiting_user' && checkpoint?.status !== 'pending') {
+            continue;
+          }
+
+          if (restoreAgentRunFromJob(detail)) {
+            return;
+          }
         }
       })
       .catch((error) => {
-        console.error('[Agent Conversation] load messages failed:', error);
+        console.error('[Agent Workspace] initial hydrate failed:', error);
       });
 
     return () => {

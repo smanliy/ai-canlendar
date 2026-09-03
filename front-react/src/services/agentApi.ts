@@ -2,6 +2,9 @@ import dayjs from 'dayjs';
 
 import { useAuthStore } from '../stores/authStore';
 import type {
+  AgentJob,
+  AgentJobDetail,
+  AgentJobEvent,
   AgentConversationMessage,
   AgentCompressionSettings,
   AgentRunDetail,
@@ -199,6 +202,46 @@ function readResultStatus(value: unknown): string {
   return value && typeof value === 'object' && typeof (value as { status?: unknown }).status === 'string' ? (value as { status: string }).status : '';
 }
 
+async function consumeSseResponse(
+  response: Response,
+  onBlock: (eventName: string, dataText: string) => Promise<void> | void
+): Promise<void> {
+  if (!response.body) {
+    throw new Error('流式响应不可用');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const dispatchBlock = async (block: string) => {
+    const lines = block.split(/\r?\n/);
+    const eventLine = lines.find((line) => line.startsWith('event:'));
+    const dataLines = lines.filter((line) => line.startsWith('data:'));
+    const eventName = eventLine?.slice('event:'.length).trim() || 'message';
+    const dataText = dataLines.map((line) => line.slice('data:'.length).trim()).join('\n');
+    if (!dataText || eventName === 'run:start' || eventName === 'done') return;
+    await onBlock(eventName, dataText);
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+    let separatorIndex = buffer.search(/\r?\n\r?\n/);
+    while (separatorIndex >= 0) {
+      const block = buffer.slice(0, separatorIndex);
+      buffer = buffer[separatorIndex] === '\r' ? buffer.slice(separatorIndex + 4) : buffer.slice(separatorIndex + 2);
+      if (block.trim()) await dispatchBlock(block);
+      separatorIndex = buffer.search(/\r?\n\r?\n/);
+    }
+
+    if (done) break;
+  }
+
+  if (buffer.trim()) await dispatchBlock(buffer);
+}
+
 async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event: AgentStreamEvent) => void | Promise<void>) {
   if (result.status === 'commandResult') {
     await onEvent({
@@ -342,6 +385,76 @@ export const agentApi = {
     });
   },
 
+  async listJobs(): Promise<AgentJob[]> {
+    return request<AgentJob[]>('/agent/jobs');
+  },
+
+  async getJob(jobId: string): Promise<AgentJobDetail> {
+    if (!jobId) throw new Error('缺少 JobId');
+    return request<AgentJobDetail>(`/agent/jobs/${encodeURIComponent(jobId)}`);
+  },
+
+  async listJobEvents(jobId: string): Promise<AgentJobEvent[]> {
+    if (!jobId) throw new Error('缺少 JobId');
+    return request<AgentJobEvent[]>(`/agent/jobs/${encodeURIComponent(jobId)}/events`);
+  },
+
+  async createJob(input: { input: string; clarificationJson?: unknown; forceNew?: boolean }): Promise<AgentJob> {
+    if (!input.input.trim()) throw new Error('请输入任务内容');
+    return request<AgentJob>('/agent/jobs', {
+      method: 'POST',
+      body: JSON.stringify({
+        input: input.input,
+        clarificationJson: input.clarificationJson,
+        forceNew: input.forceNew ?? false
+      })
+    });
+  },
+
+  async cancelJob(jobId: string): Promise<{ canceled: true }> {
+    if (!jobId) throw new Error('缺少 JobId');
+    return request(`/agent/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      method: 'POST'
+    });
+  },
+
+  async streamJobEvents(
+    jobId: string,
+    onEvent: (eventName: string, payload: unknown) => void | Promise<void>,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (!jobId) throw new Error('缺少 JobId');
+
+    const token = useAuthStore.getState().token;
+    if (!token) {
+      const refreshed = await useAuthStore.getState().refreshSession();
+      if (!refreshed) throw new Error('未登录或登录已过期');
+      return agentApi.streamJobEvents(jobId, onEvent, signal);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}/agent/jobs/${encodeURIComponent(jobId)}/events/stream`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: buildHeaders({ method: 'GET' }, token),
+        signal
+      });
+    } catch {
+      throw new Error('无法连接 Node 后端服务，请确认 node_calendar-bff 已启动');
+    }
+
+    if (!response.ok) {
+      const rawText = await response.text().catch(() => '');
+      throw new Error(rawText || `接口请求失败: HTTP ${response.status}`);
+    }
+
+    await consumeSseResponse(response, async (eventName, dataText) => {
+      const payload = JSON.parse(dataText) as unknown;
+      await onEvent(eventName, payload);
+    });
+  },
+
   async schedulePlanStream(
     input: string,
     clarificationJson: unknown,
@@ -384,19 +497,9 @@ export const agentApi = {
       throw new Error(rawText || `接口请求失败: HTTP ${response.status}`);
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
     let finalResult: SchedulePlanResult | null = null;
 
-    const dispatchBlock = async (block: string) => {
-      const lines = block.split(/\r?\n/);
-      const eventLine = lines.find((line) => line.startsWith('event:'));
-      const dataLines = lines.filter((line) => line.startsWith('data:'));
-      const eventName = eventLine?.slice('event:'.length).trim() || 'message';
-      const dataText = dataLines.map((line) => line.slice('data:'.length).trim()).join('\n');
-      if (!dataText || eventName === 'run:start' || eventName === 'done') return;
-
+    await consumeSseResponse(response, async (eventName, dataText) => {
       const payload = JSON.parse(dataText) as AgentStreamEvent;
       if (eventName === 'error') {
         const message = typeof (payload as { message?: unknown }).message === 'string' ? (payload as { message: string }).message : 'Agent stream failed';
@@ -408,24 +511,7 @@ export const agentApi = {
       if (payload.type === 'final') {
         finalResult = payload.data;
       }
-    };
-
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-
-      let separatorIndex = buffer.search(/\r?\n\r?\n/);
-      while (separatorIndex >= 0) {
-        const block = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(buffer[separatorIndex] === '\r' ? separatorIndex + 4 : separatorIndex + 2);
-        if (block.trim()) await dispatchBlock(block);
-        separatorIndex = buffer.search(/\r?\n\r?\n/);
-      }
-
-      if (done) break;
-    }
-
-    if (buffer.trim()) await dispatchBlock(buffer);
+    });
     if (!finalResult) throw new Error('Agent stream ended without final result');
     return finalResult;
   },

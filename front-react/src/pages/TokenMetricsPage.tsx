@@ -7,6 +7,7 @@ import { AppLayout } from '../layouts/AppLayout';
 import type { AppPageKey } from '../layouts/Sidebar';
 import { agentApi } from '../services/agentApi';
 import type { AgentTokenMetricsSnapshot, AgentTurnTokenMetric } from '../types/agent';
+import { AGENT_TOKEN_METRICS_CLEAR_AT_KEY, listenAgentTokenMetricsCleared } from '../utils/agentJobEvents';
 
 interface TokenMetricsPageProps {
   activePage: AppPageKey;
@@ -356,6 +357,39 @@ function TokenLineChart({ samples }: { samples: AgentTurnTokenMetric[] }) {
   );
 }
 
+function readTokenMetricsClearAt(): number {
+  const value = window.sessionStorage.getItem(AGENT_TOKEN_METRICS_CLEAR_AT_KEY);
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function filterSnapshotByClearAt(snapshot: AgentTokenMetricsSnapshot): AgentTokenMetricsSnapshot {
+  const clearAt = readTokenMetricsClearAt();
+  if (!clearAt) return snapshot;
+  const samples = snapshot.samples.filter((sample) => {
+    const createdAt = Date.parse(sample.createdAt);
+    return Number.isFinite(createdAt) && createdAt > clearAt;
+  });
+  const latest = samples[samples.length - 1];
+  const baselineContextTokens = latest?.baselineContextTokens ?? 0;
+  const savedTokens = latest?.savedTokens ?? 0;
+
+  return {
+    ...snapshot,
+    samples,
+    summary: {
+      turnCount: samples.length,
+      baselineContextTokens,
+      compressedContextTokens: latest?.compressedContextTokens ?? 0,
+      savedTokens,
+      savedRatio: baselineContextTokens > 0 ? savedTokens / baselineContextTokens : 0,
+      totalLlmTokens: samples.reduce((total, sample) => total + sample.totalLlmTokens, 0),
+      compressionEvents: samples.filter((sample) => Boolean(sample.compactEvent)).length
+    }
+  };
+}
+
 export function TokenMetricsPage({ activePage, onNavigate }: TokenMetricsPageProps) {
   const [snapshot, setSnapshot] = useState<AgentTokenMetricsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -365,9 +399,10 @@ export function TokenMetricsPage({ activePage, onNavigate }: TokenMetricsPagePro
     if (showLoading) setLoading(true);
     try {
       const nextSnapshot = await agentApi.getTokenMetrics();
+      const filteredSnapshot = filterSnapshotByClearAt(nextSnapshot);
       const nextSignature = JSON.stringify({
-        summary: nextSnapshot.summary,
-        samples: nextSnapshot.samples.map((sample) => ({
+        summary: filteredSnapshot.summary,
+        samples: filteredSnapshot.samples.map((sample) => ({
           turnId: sample.turnId,
           runId: sample.runId,
           phase: sample.phase,
@@ -386,7 +421,7 @@ export function TokenMetricsPage({ activePage, onNavigate }: TokenMetricsPagePro
       });
       if (showLoading || nextSignature !== snapshotSignatureRef.current) {
         snapshotSignatureRef.current = nextSignature;
-        setSnapshot(nextSnapshot);
+        setSnapshot(filteredSnapshot);
       }
     } catch (error) {
       message.error(error instanceof Error ? error.message : '加载 Token 指标失败');
@@ -397,6 +432,14 @@ export function TokenMetricsPage({ activePage, onNavigate }: TokenMetricsPagePro
 
   useEffect(() => {
     void loadMetrics(true);
+  }, [loadMetrics]);
+
+  useEffect(() => {
+    return listenAgentTokenMetricsCleared(() => {
+      setSnapshot(null);
+      snapshotSignatureRef.current = '';
+      void loadMetrics(true);
+    });
   }, [loadMetrics]);
 
   useEffect(() => {

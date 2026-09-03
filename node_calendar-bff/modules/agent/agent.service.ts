@@ -77,7 +77,7 @@ function recordFollowupTokenMetric(userId: string, input: { runId: string; phase
   });
 }
 
-export async function createScheduleJob(userId: string, input: string, clarificationJson?: unknown) {
+export async function createScheduleJob(userId: string, input: string, clarificationJson?: unknown, forceNew = false) {
   const payload = {
     input,
     clarificationJson
@@ -86,7 +86,7 @@ export async function createScheduleJob(userId: string, input: string, clarifica
     userId,
     type: 'schedule_plan',
     payload,
-    idempotencyKey: buildIdempotencyKey(userId, 'schedule_plan', payload)
+    idempotencyKey: forceNew ? undefined : buildIdempotencyKey(userId, 'schedule_plan', payload)
   });
 }
 
@@ -165,32 +165,38 @@ export async function rollbackScheduleRun(userId: string, runId: string, payload
 }
 
 export async function createScheduleDecisionJob(userId: string, runId: string, decision: AgentDecisionPayload) {
-  await resolveCheckpoint({
+  const checkpoint = await resolveCheckpoint({
     runId,
     userId,
     checkpointId: decision.checkpointId,
     version: decision.version
   });
+  if (!checkpoint) throw new Error('找不到可恢复的 Agent 确认节点');
   return jobRepository.createAgentJob({
     userId,
     runId,
     type: 'resume_decision',
     payload: {
       runId,
-      decision
+      decision,
+      sourceJobId: checkpoint.jobId
     },
     idempotencyKey: buildIdempotencyKey(userId, 'resume_decision', { runId, decision })
   });
 }
 
 export async function submitScheduleDecision(userId: string, runId: string, decision: AgentDecisionPayload) {
-  await resolveCheckpoint({
+  const checkpoint = await resolveCheckpoint({
     runId,
     userId,
     checkpointId: decision.checkpointId,
     version: decision.version
   });
+  if (!checkpoint) throw new Error('找不到可恢复的 Agent 确认节点');
   const result = await resumeScheduleDecisionOrchestrator(userId, runId, decision);
+  if (checkpoint.jobId) {
+    await jobRepository.completeAgentJob(checkpoint.jobId, result, 'succeeded');
+  }
   recordFollowupTokenMetric(userId, {
     runId,
     phase: 'resumeDecision',

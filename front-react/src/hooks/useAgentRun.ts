@@ -1,16 +1,215 @@
 ﻿import { useCallback } from 'react';
 import { App as AntApp } from 'antd';
 
-import { agentApi, type AgentStreamEvent, type ConversationMessagePayload, type SchedulePlanResult } from '../services/agentApi';
+import { agentApi, createInitialSteps, type AgentStreamEvent, type ConversationMessagePayload, type SchedulePlanResult } from '../services/agentApi';
 import { eventApi } from '../services/eventApi';
 import { useAgentStore } from '../stores/agentStore';
+import { dispatchAgentJobCreated, dispatchAgentTokenMetricsCleared } from '../utils/agentJobEvents';
 import type { PlanTextAnnotationPayload } from '../features/agent/PlanOptionDeck';
-import type { AgentRunStep, CalendarEventsToolResult, ConflictCheckResult, FreeWindowsToolResult, ScheduleToolResult } from '../types/agent';
+import type { AgentJobDetail, AgentRunStep, CalendarEventsToolResult, ConflictCheckResult, FreeWindowsToolResult, ScheduleToolResult } from '../types/agent';
 import type { EventPayload } from '../types/event';
 
 const TYPEWRITER_DELAY_MS = 28;
+const RESTORED_STEP_NAMES = ['解析用户输入', '判断是否拆分', '查询已有日程', '计算空闲时间', '生成排期方案', '检测冲突', '等待用户确认', '执行写入日历'];
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readScheduleResult(value: unknown): SchedulePlanResult | null {
+  if (!isRecord(value)) return null;
+  const status = value.status;
+  if (typeof status !== 'string') return null;
+  if (!['needsUserInput', 'waitingConfirm', 'commandResult', 'llmAnswer', 'autoCreated'].includes(status)) return null;
+  return value as SchedulePlanResult;
+}
+
+function readJobResult(job: AgentJobDetail): SchedulePlanResult | null {
+  const direct = readScheduleResult(job.result);
+  if (direct) return direct;
+  if (!job.checkpoint) return null;
+  const snapshot = job.checkpoint.stateSnapshot;
+  if (!isRecord(snapshot)) return null;
+  return readScheduleResult(snapshot.result);
+}
+
+function readNestedStatus(value: unknown): string {
+  if (!isRecord(value)) return '';
+  return typeof value.status === 'string' ? value.status : '';
+}
+
+function ensureConversationMessage(message: ConversationMessagePayload) {
+  const store = useAgentStore.getState();
+  const exists = store.conversationMessages.some(
+    (item) =>
+      item.role === message.role &&
+      item.runId === message.runId &&
+      item.kind === message.kind &&
+      item.content === message.content
+  );
+  if (!exists) {
+    store.appendConversationMessage(message);
+  }
+}
+
+function buildRestoredSteps(result: SchedulePlanResult): AgentRunStep[] {
+  const now = new Date().toISOString();
+  const steps: AgentRunStep[] = RESTORED_STEP_NAMES.map((name, index) => ({
+    id: `step-${index + 1}`,
+    name,
+    status: 'pending',
+    input: { index: index + 1 },
+    output: null,
+    createdAt: now,
+    updatedAt: now
+  }));
+
+  const setStep = (stepId: string, status: AgentRunStep['status'], output?: unknown) => {
+    const step = steps.find((item) => item.id === stepId);
+    if (!step) return;
+    step.status = status;
+    if (output !== undefined) step.output = output;
+    step.updatedAt = new Date().toISOString();
+  };
+
+  if (result.status === 'needsUserInput') {
+    setStep('step-1', 'running', {
+      message: result.message,
+      reasons: result.reasons,
+      clarificationJson: result.clarificationJson
+    });
+    return steps;
+  }
+
+  if (result.status === 'waitingConfirm') {
+    setStep('step-1', 'success', { message: '用户输入已解析' });
+    setStep('step-2', 'success', { message: '已判断需要继续排期' });
+    setStep('step-3', 'success', { message: '已查询用户本地日程', calendarEventsResult: result.calendarEventsToolResult, agentTrace: result.agentTrace });
+    setStep('step-4', 'success', { message: '已根据本地日程和用户偏好计算空闲时间', freeWindowsResult: result.freeWindowsToolResult, agentTrace: result.agentTrace });
+
+    const scheduleStatus = readNestedStatus(result.scheduleToolResult);
+    const conflictStatus = readNestedStatus(result.conflictCheckResult);
+
+    if (scheduleStatus === 'pending' || scheduleStatus === 'needsDecision') {
+      setStep('step-5', 'running', {
+        message:
+          scheduleStatus === 'needsDecision'
+            ? '当前子任务需要用户选择三个方案之一后继续排期'
+            : '排期工具仍在等待结果',
+        scheduleToolResult: result.scheduleToolResult,
+        agentTrace: result.agentTrace
+      });
+      return steps;
+    }
+
+    setStep('step-5', 'success', { message: '已调用 Python 排期工具生成草稿方案', scheduleToolResult: result.scheduleToolResult, agentTrace: result.agentTrace });
+
+    if (conflictStatus === 'pending' || conflictStatus === 'needsDecision') {
+      setStep('step-6', 'running', {
+        message: conflictStatus === 'needsDecision' ? '检测到未确认冲突，需要处理后才能继续' : '冲突检测仍在等待结果',
+        conflictCheckResult: result.conflictCheckResult,
+        agentTrace: result.agentTrace
+      });
+      return steps;
+    }
+
+    setStep('step-6', 'success', { message: result.conflicts.length > 0 ? '检测到时间重叠冲突' : '未检测到时间重叠冲突', conflictCheckResult: result.conflictCheckResult, agentTrace: result.agentTrace });
+    setStep('step-7', 'running', {
+      runId: result.runId,
+      status: result.plans.length > 0 ? '等待用户选择方案' : '等待用户确认排期处理方式'
+    });
+    return steps;
+  }
+
+  if (result.status === 'autoCreated') {
+    setStep('step-1', 'success', { message: '用户输入已解析' });
+    setStep('step-2', 'success', { message: '已判断需要继续排期' });
+    setStep('step-3', 'success', { message: '已查询用户本地日程', calendarEventsResult: result.calendarEventsToolResult, agentTrace: result.agentTrace });
+    setStep('step-4', 'success', { message: '已根据本地日程和用户偏好计算空闲时间', freeWindowsResult: result.freeWindowsToolResult, agentTrace: result.agentTrace });
+    setStep('step-5', 'success', { message: '已生成并写入单项排期', scheduleToolResult: result.scheduleToolResult, agentTrace: result.agentTrace });
+    setStep('step-6', 'success', { message: '未检测到冲突', conflictCheckResult: result.conflictCheckResult, agentTrace: result.agentTrace });
+    setStep('step-7', 'success', { runId: result.runId, status: '已完成' });
+    setStep('step-8', 'success', { createdCount: result.createdCount });
+    return steps;
+  }
+
+  return steps;
+}
+
+function buildRunningRestoreSteps(message = 'Agent 正在后台继续执行，请稍后刷新或等待完成') {
+  const steps = createInitialSteps();
+  const step = steps.find((item) => item.id === 'step-1');
+  if (step) {
+    step.status = 'running';
+    step.output = { message };
+    step.updatedAt = new Date().toISOString();
+  }
+  return steps;
+}
+
+export function restoreAgentRunFromJob(job: AgentJobDetail): boolean {
+  const result = readJobResult(job);
+
+  const store = useAgentStore.getState();
+  const input = isRecord(job.input) && typeof job.input.input === 'string' ? job.input.input : '';
+  if (input) {
+    ensureConversationMessage({
+      role: 'user',
+      content: input,
+      kind: 'userInput',
+      runId: job.runId
+    });
+  }
+  if (!result) {
+    if (job.status !== 'running') return false;
+    store.setCurrentRunId(job.runId);
+    store.setSubmittedInput(input);
+    store.setUserInput('');
+    store.setRunStatus('running');
+    store.setClarification(null);
+    store.setDirectAnswer(null);
+    store.setConfirmLoading(false);
+    store.setSteps(buildRunningRestoreSteps());
+    store.setPlanOptions([], []);
+    store.selectPlan(null);
+    return true;
+  }
+  store.setCurrentRunId(result.runId);
+  store.setSubmittedInput(input);
+  store.setUserInput('');
+  store.setRunStatus(result.status === 'needsUserInput' ? 'needsUserInput' : 'waitingConfirm');
+  store.setClarification(null);
+  store.setDirectAnswer(null);
+  store.setConfirmLoading(false);
+  store.setSteps(buildRestoredSteps(result));
+
+  if (result.status === 'needsUserInput') {
+    store.setClarification({
+      message: result.message,
+      reasons: result.reasons,
+      clarificationJson: result.clarificationJson
+    });
+    store.setPlanOptions([], []);
+    store.selectPlan(null);
+    return true;
+  }
+
+  if (result.status === 'waitingConfirm') {
+    store.setPlanOptions(result.plans, result.conflicts);
+    store.selectPlan(null);
+    return true;
+  }
+
+  if (result.status === 'autoCreated') {
+    store.setPlanOptions([result.plan], []);
+    store.selectPlan(result.plan.id);
+    return true;
+  }
+
+  return false;
+}
 
 function appendAndPersistConversationMessage(message: ConversationMessagePayload) {
   useAgentStore.getState().appendConversationMessage(message);
@@ -160,7 +359,7 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
   const { message } = AntApp.useApp();
   const generatePlan = useCallback(
     async (overrideInput?: string) => {
-      const { userInput, clarification, clarificationInput, startRun, updateStep, setRunStatus, setDirectAnswer } = useAgentStore.getState();
+      const { userInput, clarification, clarificationInput, startRun } = useAgentStore.getState();
       const prompt = (overrideInput ?? userInput).trim();
       if (!prompt) {
         message.warning('请先输入排期目标');
@@ -168,11 +367,10 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
       }
 
       const parsedClarification = clarification ? clarificationInput : undefined;
-      const clearCommand = isClearCommand(prompt);
 
       const runId = `run-${Date.now()}`;
       startRun(runId, prompt);
-      if (!clearCommand) {
+      if (!isClearCommand(prompt)) {
         appendAndPersistConversationMessage({
           role: 'user',
           content: prompt,
@@ -190,36 +388,52 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
           return eventQueue;
         };
 
-        const handleEvent = async (event: AgentStreamEvent) => {
+        const handleJobEvent = async (eventName: string, payload: unknown) => {
           const store = useAgentStore.getState();
-          if (event.type === 'stepStarted') {
-            store.updateStep(event.stepId, 'running', event.message ? { message: event.message } : undefined);
+          const record = (payload && typeof payload === 'object' ? payload : {}) as {
+            stepId?: string | null;
+            message?: string | null;
+            payload?: unknown;
+            command?: 'clear' | 'compact';
+            summary?: string;
+            status?: string;
+            result?: SchedulePlanResult | null;
+          };
+          const nested = record.payload && typeof record.payload === 'object' ? (record.payload as Record<string, unknown>) : null;
+
+          if (eventName === 'step:start') {
+            store.updateStep(record.stepId ?? 'step-1', 'running', record.message ? { message: record.message } : undefined);
             return;
           }
 
-          if (event.type === 'stepUpdated') {
-            store.updateStep(event.stepId, 'running', event.output);
+          if (eventName === 'step:update') {
+            const output = nested?.output ?? (record.message ? { message: record.message, payload: record.payload } : record.payload);
+            store.updateStep(record.stepId ?? 'step-1', 'running', output);
             return;
           }
 
-          if (event.type === 'stepSucceeded') {
-            await typeStepOutput(event.stepId, 'success', event.output, '当前步骤已完成', store.updateStep);
+          if (eventName === 'step:success') {
+            const output = nested?.output ?? (record.message ? { message: record.message, payload: record.payload } : record.payload);
+            await typeStepOutput(record.stepId ?? 'step-1', 'success', output, '当前步骤已完成', store.updateStep);
             return;
           }
 
-          if (event.type === 'stepFailed') {
-            await typeStepOutput(event.stepId, 'failed', event.output, '当前步骤需要补充信息或处理失败', store.updateStep);
+          if (eventName === 'step:failed') {
+            const output = nested?.output ?? (record.message ? { message: record.message, payload: record.payload } : record.payload);
+            await typeStepOutput(record.stepId ?? 'step-1', 'failed', output, '当前步骤需要补充信息或处理失败', store.updateStep);
             return;
           }
 
-          if (event.type === 'directAnswer') {
+          if (eventName === 'direct:answer') {
+            const answer = typeof nested?.answer === 'string' ? nested.answer : typeof record.message === 'string' ? record.message : '';
+            if (!answer) return;
             store.resetRun();
             store.setSubmittedInput(prompt);
             store.setRunStatus('running');
-            await typeDirectAnswer(event.answer, store.setDirectAnswer);
+            await typeDirectAnswer(answer, store.setDirectAnswer);
             appendAndPersistConversationMessage({
               role: 'assistant',
-              content: event.answer,
+              content: answer,
               kind: 'directAnswer'
             });
             store.setDirectAnswer(null);
@@ -227,17 +441,21 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
             return;
           }
 
-          if (event.type === 'commandResult') {
-            if (event.command === 'clear') {
+          if (eventName === 'command:result') {
+            const command = (nested?.command as 'clear' | 'compact' | undefined) ?? record.command;
+            const messageText = typeof nested?.message === 'string' ? nested.message : record.message ?? '';
+            const summaryText = typeof nested?.summary === 'string' ? nested.summary : record.summary;
+            if (command === 'clear') {
               await agentApi.clearConversationMessages();
               store.clearConversation();
-              message.success(event.message);
+              dispatchAgentTokenMetricsCleared();
+              message.success(messageText || '已清空会话');
               return;
             }
             store.resetRun();
             store.setSubmittedInput(prompt);
             store.setRunStatus('running');
-            const commandContent = event.summary ? `${event.message}\n\n${event.summary}` : event.message;
+            const commandContent = summaryText ? `${messageText}\n\n${summaryText}`.trim() : messageText;
             await typeDirectAnswer(commandContent, store.setDirectAnswer);
             appendAndPersistConversationMessage({
               role: 'assistant',
@@ -246,25 +464,56 @@ export function useAgentRun(onEventsCreated: () => Promise<void> | void) {
             });
             store.setDirectAnswer(null);
             store.setRunStatus('success');
-            message.success(event.message);
+            message.success(messageText || '命令已执行');
             return;
           }
 
-          if (event.type === 'final') {
-            latestFinalResult = event.data;
+          if (eventName === 'final') {
+            const finalResult = (nested?.data as SchedulePlanResult | undefined) ?? (record.payload as { data?: SchedulePlanResult } | undefined)?.data;
+            if (finalResult) {
+              latestFinalResult = finalResult;
+            }
             return;
           }
 
-          if (event.type === 'error') {
-            throw new Error(event.message);
+          if (eventName === 'job:succeeded' || eventName === 'job:waiting_user') {
+            const finalResult = record.result ?? (nested as SchedulePlanResult | null) ?? (record.payload as SchedulePlanResult | undefined) ?? null;
+            if (finalResult) {
+              latestFinalResult = finalResult;
+            }
+            return;
+          }
+
+          if (eventName === 'job:state') {
+            if (record.status === 'succeeded' || record.status === 'waiting_user') {
+              const finalResult = record.result ?? null;
+              if (finalResult) {
+                latestFinalResult = finalResult;
+              }
+            }
+            return;
+          }
+
+          if (eventName === 'job:failed') {
+            throw new Error(record.message ?? 'Agent job failed');
+          }
+
+          if (eventName === 'error') {
+            throw new Error(record.message ?? 'Agent job stream failed');
           }
         };
 
-        const result = await agentApi.schedulePlanStream(prompt, parsedClarification, (event) => enqueue(() => handleEvent(event)));
+        const createdJob = await agentApi.createJob({ input: prompt, clarificationJson: parsedClarification });
+        dispatchAgentJobCreated(createdJob);
+        useAgentStore.getState().setCurrentRunId(createdJob.runId);
+        const streamPromise = agentApi.streamJobEvents(createdJob.id, (eventName, payload) => enqueue(() => handleJobEvent(eventName, payload)));
+        await streamPromise;
         await eventQueue;
-        applyFinalResult(latestFinalResult ?? result, prompt);
+        const result = latestFinalResult ?? (await agentApi.getJob(createdJob.id)).result;
+        if (!result) throw new Error('队列任务结束但未返回结果');
+        applyFinalResult(result as SchedulePlanResult, prompt);
 
-        const finalResult = latestFinalResult ?? result;
+        const finalResult = result as SchedulePlanResult;
         if (finalResult.status === 'needsUserInput') {
           message.warning('信息还不够明确，请补全 JSON 后再次发送');
           return;

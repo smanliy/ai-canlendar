@@ -2,7 +2,7 @@ import { CheckCircleFilled, CloseCircleFilled, GlobalOutlined, LoadingOutlined, 
 import { Alert, Button, Input } from 'antd';
 
 import { useAgentStore } from '../../stores/agentStore';
-import type { LocalCalendarEvent, TokenUsage } from '../../types/agent';
+import type { AgentRunStep, LocalCalendarEvent, TokenUsage } from '../../types/agent';
 // Runtime graph display is intentionally disabled while LangSmith tracing is evaluated.
 // import type { AgentRunStep, AgentTrace } from '../../types/agent';
 // import { AgentTraceGraph } from './AgentTraceGraph';
@@ -284,6 +284,27 @@ function readScheduleStatus(output: unknown) {
   return errors.length > 0 ? `排期工具处理失败：${errors.join('；')}` : '排期工具处理失败';
 }
 
+function displayStepStatus(step: AgentRunStep): AgentRunStep['status'] {
+  if (step.id === 'step-5') {
+    const result = readScheduleResult(step.output);
+    if (result && (result.status === 'pending' || result.status === 'needsDecision')) {
+      return 'running';
+    }
+  }
+
+  if (step.id === 'step-6') {
+    const value = step.output && typeof step.output === 'object' ? (step.output as { conflictCheckResult?: unknown }).conflictCheckResult : null;
+    const conflictStatus = value && typeof value === 'object' && typeof (value as { status?: unknown }).status === 'string'
+      ? String((value as { status: string }).status)
+      : '';
+    if (conflictStatus === 'pending' || conflictStatus === 'needsDecision') {
+      return 'running';
+    }
+  }
+
+  return step.status;
+}
+
 export function AgentChatPanel({ onGenerate, onConfirm, onAnnotateText, onReject, onScheduleDecision, variant = 'compact' }: AgentChatPanelProps) {
   const userInput = useAgentStore((state) => state.userInput);
   const runStatus = useAgentStore((state) => state.runStatus);
@@ -369,12 +390,12 @@ export function AgentChatPanel({ onGenerate, onConfirm, onAnnotateText, onReject
               {visibleSteps.map((step) => (
                 <div className="agent-step-block" key={step.id}>
                   <button className="agent-step-row" type="button">
-                    {statusIcon[step.status]}
+                    {statusIcon[displayStepStatus(step)]}
                     <span className="agent-step-title">
                       {step.name}
                       <small>{formatStepUsage(step)}</small>
                     </span>
-                    <em>{statusLabel[step.status]}</em>
+                    <em>{statusLabel[displayStepStatus(step)]}</em>
                   </button>
 
                   {step.id === 'step-2' && step.status !== 'pending' && !clarification ? (

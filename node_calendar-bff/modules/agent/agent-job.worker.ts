@@ -17,15 +17,17 @@ import {
   appendAgentJobEvent,
   claimNextAgentJob,
   completeAgentJob,
+  cancelAgentJobById,
   failAgentJob,
   heartbeatAgentJob,
   recoverStaleAgentJobs,
   updateAgentJobRunId,
   type AgentJobRecord
 } from './agent-job.repository';
+import { expirePendingCheckpoints } from './agent-checkpoint.repository';
 
 const WORKER_POLL_MS = 1200;
-const CHECKPOINT_TTL_MS = 24 * 60 * 60 * 1000;
+const CHECKPOINT_TTL_MS = 60 * 60 * 1000;
 const STALE_JOB_MS = 5 * 60 * 1000;
 
 let workerStarted = false;
@@ -161,6 +163,7 @@ async function executeResumeDecisionJob(job: AgentJobRecord): Promise<AgentDecis
   const input = readObject(job.input);
   const runId = typeof input.runId === 'string' ? input.runId : job.runId;
   const decision = readObject(input.decision) as unknown as AgentDecisionPayload;
+  const sourceJobId = typeof input.sourceJobId === 'string' ? input.sourceJobId.trim() : '';
   if (!decision.optionId || !decision.taskId) throw new Error('AgentJob decision payload is incomplete');
 
   await appendAgentJobEvent({
@@ -170,6 +173,9 @@ async function executeResumeDecisionJob(job: AgentJobRecord): Promise<AgentDecis
     message: '正在根据用户决策恢复 Agent 排期'
   });
   const result = await resumeScheduleDecision(job.userId, runId, decision);
+  if (sourceJobId) {
+    await completeAgentJob(sourceJobId, result, 'succeeded');
+  }
   recordFollowupTokenMetric(job.userId, {
     runId,
     phase: 'resumeDecision',
@@ -246,11 +252,30 @@ async function executeJob(job: AgentJobRecord): Promise<unknown> {
   throw new Error(`Unsupported Agent job type: ${job.type}`);
 }
 
+async function expireIdleCheckpoints(): Promise<void> {
+  const expired = await expirePendingCheckpoints(new Date(Date.now() - CHECKPOINT_TTL_MS));
+  for (const checkpoint of expired) {
+    if (!checkpoint.jobId) continue;
+    await cancelAgentJobById(checkpoint.jobId);
+    await appendAgentJobEvent({
+      jobId: checkpoint.jobId,
+      type: 'job:canceled',
+      message: '确认节点超过 1 小时未恢复，任务已自动取消',
+      payload: {
+        checkpointId: checkpoint.id,
+        reason: 'checkpoint_expired'
+      },
+      level: 'warn'
+    });
+  }
+}
+
 async function tick(): Promise<void> {
   const recovered = await recoverStaleAgentJobs(new Date(Date.now() - STALE_JOB_MS));
   if (recovered > 0) {
     console.warn('[AgentJobWorker] recovered stale jobs', { recovered });
   }
+  await expireIdleCheckpoints();
   const job = await claimNextAgentJob(workerId);
   if (!job) return;
 

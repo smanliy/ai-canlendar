@@ -15,6 +15,9 @@ import {
   type AgentCompactionEvent,
   type SchedulingSessionState
 } from './session-compression';
+import * as jobRepository from './agent-job.repository';
+import { cancelPendingCheckpointsByUser } from './agent-checkpoint.repository';
+import { clearPlanningSessionsByUser } from './agent-planning-session.repository';
 import * as conversationRepository from './agent-conversation.repository';
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
@@ -330,7 +333,12 @@ export async function runAgentMainFlow({ userId, input, clarificationJson, onEve
 
   if (command.command === 'clear') {
     clearSessionState(userId);
-    await conversationRepository.clearConversationMessages(userId);
+    await Promise.all([
+      conversationRepository.clearConversationMessages(userId),
+      jobRepository.cancelActiveAgentJobsByUser(userId),
+      cancelPendingCheckpointsByUser(userId),
+      clearPlanningSessionsByUser(userId)
+    ]);
     const data: AgentCommandResponse = {
       runId: `command-${Date.now()}`,
       status: 'commandResult',

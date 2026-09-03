@@ -227,3 +227,25 @@ model AgentCompensation {
     @@index([userId, createdAt])
     @@index([runId])
 }
+
+model ScheduleOperationLog {
+    id                 String   @id @default(uuid())
+    userId             String
+    taskId             String
+    jobId              String?
+    operateType        String
+    targetScheduleId   String
+    beforeSnapshot     Json?
+    afterSnapshot      Json?
+    isCompensated      Boolean  @default(false)
+    compensatedAt      DateTime?
+    compensationReason String?
+    createdAt          DateTime @default(now())
+    updatedAt          DateTime @updatedAt
+
+    user User @relation(fields: [userId], references: [id])
+
+    @@index([userId, taskId, createdAt])
+    @@index([taskId, isCompensated, createdAt])
+    @@index([targetScheduleId])
+}

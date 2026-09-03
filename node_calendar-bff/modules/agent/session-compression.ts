@@ -132,10 +132,39 @@ function createEmptySession(): SchedulingSessionState {
 // 一个人一个会话仓库
 const sessions = new Map<string, SchedulingSessionState>();
 const compressionSettingsByUser = new Map<string, AgentCompressionSettings>();
-const tokenMetricsByUser = new Map<string, AgentTurnTokenMetric[]>();
-const baselineContextTokensByUser = new Map<string, number>();
-const turnCounterByUser = new Map<string, number>();
+interface TokenRoundState {
+  runId: string | null;
+  samples: AgentTurnTokenMetric[];
+  baselineContextTokens: number;
+  turnCounter: number;
+}
+
+const tokenMetricsByUser = new Map<string, TokenRoundState>();
 const latestCompactionUsageByUser = new Map<string, TokenUsageSummary>();
+
+function getTokenRoundState(userId: string): TokenRoundState {
+  const existing = tokenMetricsByUser.get(userId);
+  if (existing) return existing;
+  const next: TokenRoundState = {
+    runId: null,
+    samples: [],
+    baselineContextTokens: 0,
+    turnCounter: 0,
+  };
+  tokenMetricsByUser.set(userId, next);
+  return next;
+}
+
+function resetTokenRoundState(userId: string, runId: string): TokenRoundState {
+  const next: TokenRoundState = {
+    runId,
+    samples: [],
+    baselineContextTokens: 0,
+    turnCounter: 0,
+  };
+  tokenMetricsByUser.set(userId, next);
+  return next;
+}
 
 function trimText(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -376,8 +405,10 @@ export function recordAgentTurnTokenMetric(
     compactEvent?: AgentCompactionEvent;
   },
 ): AgentTurnTokenMetric {
+  const roundState = getTokenRoundState(userId);
+  const activeState = roundState.runId === input.runId ? roundState : resetTokenRoundState(userId, input.runId);
   const compressedContextTokens = estimateSessionTokens(input.state);
-  const previousBaseline = baselineContextTokensByUser.get(userId) ?? input.contextTokensBefore;
+  const previousBaseline = activeState.baselineContextTokens ?? input.contextTokensBefore;
   const observedContextGrowth = Math.max(0, compressedContextTokens - input.contextTokensBefore);
   const addedContextTokens = Math.max(
     observedContextGrowth,
@@ -398,7 +429,7 @@ export function recordAgentTurnTokenMetric(
   }
   const savedTokens = Math.max(0, baselineContextTokens - compressedContextTokens);
   const nodes = buildNodeMetrics(input.result && typeof input.result === "object" ? (input.result as { llmUsageByStep?: unknown }).llmUsageByStep : undefined, input.compactEvent);
-  const turnId = (turnCounterByUser.get(userId) ?? 0) + 1;
+  const turnId = activeState.turnCounter + 1;
   const sample: AgentTurnTokenMetric = {
     turnId,
     runId: input.runId,
@@ -416,11 +447,12 @@ export function recordAgentTurnTokenMetric(
     nodes,
     createdAt: nowIso(),
   };
-  baselineContextTokensByUser.set(userId, baselineContextTokens);
-  turnCounterByUser.set(userId, turnId);
-  const samples = tokenMetricsByUser.get(userId) ?? [];
-  samples.push(sample);
-  tokenMetricsByUser.set(userId, samples.slice(-120));
+  activeState.runId = input.runId;
+  activeState.baselineContextTokens = baselineContextTokens;
+  activeState.turnCounter = turnId;
+  activeState.samples.push(sample);
+  activeState.samples = activeState.samples.slice(-120);
+  tokenMetricsByUser.set(userId, activeState);
   return sample;
 }
 
@@ -437,14 +469,15 @@ export function recordAgentTurnContinuationTokenMetric(
     compactEvent?: AgentCompactionEvent;
   },
 ): AgentTurnTokenMetric {
-  const samples = tokenMetricsByUser.get(userId) ?? [];
-  const latest = samples[samples.length - 1];
-  if (!latest || latest.runId !== input.runId) {
+  const roundState = getTokenRoundState(userId);
+  if (roundState.runId !== input.runId || roundState.samples.length === 0) {
     return recordAgentTurnTokenMetric(userId, input);
   }
 
+  const latest = roundState.samples[roundState.samples.length - 1];
+
   const compressedContextTokens = estimateSessionTokens(input.state);
-  const previousBaseline = baselineContextTokensByUser.get(userId) ?? latest.baselineContextTokens;
+  const previousBaseline = roundState.baselineContextTokens ?? latest.baselineContextTokens;
   const observedContextGrowth = Math.max(0, compressedContextTokens - latest.compressedContextTokens);
   const addedContextTokens = Math.max(
     observedContextGrowth,
@@ -482,14 +515,15 @@ export function recordAgentTurnContinuationTokenMetric(
     createdAt: nowIso(),
   };
 
-  samples[samples.length - 1] = updated;
-  baselineContextTokensByUser.set(userId, baselineContextTokens);
-  tokenMetricsByUser.set(userId, samples.slice(-120));
+  roundState.runId = input.runId;
+  roundState.baselineContextTokens = baselineContextTokens;
+  roundState.samples[roundState.samples.length - 1] = updated;
+  tokenMetricsByUser.set(userId, roundState);
   return updated;
 }
 
 export function getAgentTokenMetrics(userId: string): AgentTokenMetricsSnapshot {
-  const samples = tokenMetricsByUser.get(userId) ?? [];
+  const samples = getTokenRoundState(userId).samples;
   const latest = samples[samples.length - 1];
   const baselineContextTokens = latest?.baselineContextTokens ?? 0;
   const savedTokens = latest?.savedTokens ?? 0;
@@ -518,8 +552,6 @@ export function clearSessionState(userId: string): SchedulingSessionState {
   const next = createEmptySession();
   sessions.set(userId, next);
   tokenMetricsByUser.delete(userId);
-  baselineContextTokensByUser.delete(userId);
-  turnCounterByUser.delete(userId);
   latestCompactionUsageByUser.delete(userId);
   return next;
 }

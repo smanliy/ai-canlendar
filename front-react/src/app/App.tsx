@@ -5,6 +5,7 @@ import { Navigate, Route, BrowserRouter as Router, Routes, useLocation, useNavig
 
 import type { AppPageKey } from '../layouts/Sidebar';
 import { AgentWorkspacePage } from '../pages/AgentWorkspacePage';
+import { AgentOpsPage } from '../pages/AgentOpsPage';
 import { CalendarWorkspacePage } from '../pages/CalendarWorkspacePage';
 import { LoginPage } from '../pages/LoginPage';
 import { SettingsPage } from '../pages/SettingsPage';
@@ -69,6 +70,7 @@ function GuestOnly({ children }: { children: ReactNode }) {
 
 const pageRoutes: Record<AppPageKey, string> = {
   agentWorkspace: '/agent',
+  agentOps: '/ops',
   calendar: '/calendar',
   tokenMetrics: '/tokens',
   settings: '/settings'
@@ -95,6 +97,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <AgentWorkspacePage activePage="agentWorkspace" onNavigate={onNavigate} />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/ops"
+        element={
+          <RequireAuth>
+            <AgentOpsPage activePage="agentOps" onNavigate={onNavigate} />
           </RequireAuth>
         }
       />
