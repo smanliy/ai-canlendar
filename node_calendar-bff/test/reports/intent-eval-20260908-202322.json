@@ -1,0 +1,25 @@
+[
+  {
+    "id": "A01",
+    "category": "原子提醒",
+    "input": "三分钟后提醒我洗澡",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "洗澡",
+          "startTime": "2026-09-08T20:26:20+08:00",
+          "endTime": "2026-09-08T20:41:20+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求三分钟后提醒洗澡，属于直接创建提醒事件。",
+    "fallbackUsed": false,
+    "latencyMs": 1454
+  }
+]

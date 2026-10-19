@@ -1,5 +1,4 @@
-import { runScheduleAgent } from './agent.orchestrator';
-import type { AgentAutoCreatedResponse, AgentClarificationResponse, AgentCreateRunResponse, AgentRunResponse } from './agent.types';
+import type { AgentAutoCreatedResponse, AgentClarificationResponse, AgentConflictResolutionResponse, AgentCreateRunResponse, AgentEventSelectionResponse, AgentRunResponse } from './agent.types';
 import {
   appendMessage,
   compactSession,
@@ -19,20 +18,14 @@ import * as jobRepository from './agent-job.repository';
 import { cancelPendingCheckpointsByUser } from './agent-checkpoint.repository';
 import { clearPlanningSessionsByUser } from './agent-planning-session.repository';
 import * as conversationRepository from './agent-conversation.repository';
-
-const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
+import { classifyUserIntent, nowIsoWithOffset } from './intent-classifier';
+import { buildResumeQueueContext, executeIntentOperations } from './agent-operations';
 
 type SessionCommand = 'clear' | 'compact';
 
 interface ParsedCommand {
   command: SessionCommand | null;
   trailingText: string;
-}
-
-interface RouteResult {
-  needAgent: boolean;
-  reason: string;
-  directAnswer?: string;
 }
 
 interface RunMainFlowInput {
@@ -81,185 +74,6 @@ function parseCommand(input: string): ParsedCommand {
     command: rawCommand === 'clear' ? 'clear' : 'compact',
     trailingText: (match.groups.text ?? '').trim()
   };
-}
-
-function getDeepSeekApiKey(): string {
-  return process.env.DEEPSEEK_API_KEY?.trim() || '';
-}
-
-function getDeepSeekModel(): string {
-  return process.env.DEEPSEEK_MODEL?.trim() || 'deepseek-v4-flash';
-}
-
-function parseJsonObject(content: string): Record<string, unknown> {
-  const text = content.trim();
-  if (!text) throw new Error('LLM returned blank content');
-  try {
-    const value = JSON.parse(text);
-    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error(`LLM returned non-JSON content: ${text.slice(0, 300)}`);
-    const value = JSON.parse(match[0]);
-    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-  }
-}
-
-async function callDeepSeekJson(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, maxTokens = 1600): Promise<Record<string, unknown>> {
-  const apiKey = getDeepSeekApiKey();
-  if (!apiKey) {
-    throw new Error('Missing DEEPSEEK_API_KEY');
-  }
-
-  const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: getDeepSeekModel(),
-      messages,
-      response_format: { type: 'json_object' },
-      temperature: 0,
-      max_tokens: maxTokens,
-      stream: false,
-      thinking: { type: 'disabled' }
-    })
-  });
-
-  const rawText = await response.text();
-  if (!response.ok) {
-    throw new Error(`DeepSeek main-flow request failed: HTTP ${response.status} ${rawText}`);
-  }
-  const data = JSON.parse(rawText) as { choices?: Array<{ message?: { content?: string | null } }> };
-  const content = data.choices?.[0]?.message?.content || '';
-  return parseJsonObject(content);
-}
-
-function likelyNeedsSchedulingAgent(input: string): boolean {
-  const text = input.toLowerCase();
-  return [
-    '排期',
-    '日程',
-    '安排',
-    '计划',
-    '截止',
-    'deadline',
-    '花费',
-    '耗时',
-    '小时',
-    '分钟',
-    '修改方案',
-    '确认方案',
-    '写入日历',
-    '冲突',
-    '黄金时间',
-    '选中',
-    '批注',
-    'diy'
-  ].some((keyword) => text.includes(keyword));
-}
-
-function buildSimpleDirectRoute(input: string): RouteResult | null {
-  const normalized = input.trim().toLowerCase().replace(/[！!。.\s]/g, '');
-  const greetings = new Set([
-    '你好',
-    '您好',
-    'hello',
-    'hi',
-    'hey',
-    '在吗',
-    '在不在',
-    '嗨',
-    '哈喽'
-  ]);
-
-  if (greetings.has(normalized)) {
-    return {
-      needAgent: false,
-      reason: '用户只是寒暄，不需要进入日程排期 Agent',
-      directAnswer: '你好，我在。你可以告诉我目标、截止时间和预计花费时间，我再帮你生成排期方案。'
-    };
-  }
-
-  if (['谢谢', '感谢', 'thanks', 'thankyou'].includes(normalized)) {
-    return {
-      needAgent: false,
-      reason: '用户只是表达感谢，不需要进入日程排期 Agent',
-      directAnswer: '不客气。需要继续排期或调整方案时，直接告诉我就行。'
-    };
-  }
-
-  return null;
-}
-
-function buildLocalRoute(input: string): RouteResult {
-  const directRoute = buildSimpleDirectRoute(input);
-  if (directRoute) return directRoute;
-
-  if (likelyNeedsSchedulingAgent(input)) {
-    return {
-      needAgent: true,
-      reason: '命中日程排期、任务安排、方案修改或写入日历相关意图'
-    };
-  }
-  return {
-    needAgent: false,
-    reason: '未命中排期意图，按普通问答直接回答',
-    directAnswer: '我可以直接回答这个问题；如果你要我安排日程，请补充截止时间和预计花费时间。'
-  };
-}
-
-async function routeUserInput(input: string, state: SchedulingSessionState): Promise<RouteResult> {
-  const directRoute = buildSimpleDirectRoute(input);
-  if (directRoute) return directRoute;
-
-  if (!getDeepSeekApiKey()) return buildLocalRoute(input);
-
-  try {
-    const result = await callDeepSeekJson(
-      [
-        {
-          role: 'system',
-          content: [
-            '你是单会话日程排期 Agent 的请求路由器。',
-            '只返回 JSON object，不要 markdown。',
-            'Schema: {"needAgent": boolean, "reason": string, "answer": string | null}',
-            '规则：',
-            '0. 如果用户只是说“你好”、“hello”、“hi”、“在吗”、感谢、寒暄，needAgent=false，并直接友好回复。',
-            '1. 如果用户在询问你是谁、你能做什么、能力介绍、使用说明、普通知识问答、解释、闲聊，且没有明确要求创建/修改/安排日程，needAgent=false，并在 answer 里直接回答。',
-            '2. 只有当用户明确要创建、修改、安排、优化、确认、写入日程，或需要使用本地日历/空闲时间/冲突检测/方案卡/批注/DIY 排期能力时，needAgent=true。',
-            '3. 提到时间不一定需要 Agent；只有用户要你做排期动作或日程操作时才 needAgent=true。',
-            '4. 不要在路由阶段拆分任务；needAgent=true 时后续已有 Agent 会处理。',
-            '5. 如果用户询问当前模型、供应商、底层能力，只能基于 user message 里的 runtimeContext 回答；不知道的字段就说“不确定”，不要自行声称是 OpenAI/GPT。'
-          ].join('\n')
-        },
-        {
-          role: 'user',
-          content: JSON.stringify({
-            input,
-            runtimeContext: {
-              assistantName: 'ChronoAgent',
-              llmProvider: 'DeepSeek',
-              llmModel: getDeepSeekModel()
-            },
-            summary: state.summary,
-            recentMessages: state.messages.slice(-8)
-          })
-        }
-      ],
-      1800
-    );
-    return {
-      needAgent: Boolean(result.needAgent),
-      reason: typeof result.reason === 'string' ? result.reason : 'LLM router returned a decision',
-      directAnswer: typeof result.answer === 'string' ? result.answer : undefined
-    };
-  } catch (error) {
-    console.warn('[Agent Main Flow] LLM router failed, using local heuristic:', error instanceof Error ? error.message : error);
-    return buildLocalRoute(input);
-  }
 }
 
 function mergeAgentResultIntoState(state: SchedulingSessionState, input: string, result: AgentRunResponse | AgentClarificationResponse | AgentAutoCreatedResponse): void {
@@ -406,17 +220,34 @@ export async function runAgentMainFlow({ userId, input, clarificationJson, onEve
       ? buildCompactionEvent('auto', autoBeforeTokens, estimateSessionTokens(activeState), consumeLatestCompactionUsage(userId))
       : undefined;
   const compactEvent = autoCompactEvent ?? microCompactEvent;
-  const route = await routeUserInput(input, activeState);
+  // ==== LLM 意图识别（唯一的判断者）====
+  // 一条输入可拆出多个操作（resume / new_task / 日程 CRUD / chat），
+  // 是否"继续"、是否新任务、CRUD 参数全部由 LLM 语义判断，代码不写死关键词。
+  const resumeQueue = await buildResumeQueueContext(userId);
+  const inputForIntent = clarificationJson
+    ? `${input}\n补充信息：${JSON.stringify(clarificationJson)}`
+    : input;
+  const classification = await classifyUserIntent(inputForIntent, {
+    state: activeState,
+    resume: resumeQueue,
+    nowIso: nowIsoWithOffset(),
+    timezone: 'Asia/Shanghai'
+  });
 
-  if (!route.needAgent) {
-    const answer = route.directAnswer || '这个问题不需要进入排期 Agent。';
+  const hasBusinessOperation = classification.operations.some((op) => op.kind !== 'chat');
+
+  // 纯聊天：没有任何业务操作，直接回答
+  if (!hasBusinessOperation) {
+    const answer =
+      classification.operations.map((op) => op.answer).filter((text): text is string => Boolean(text)).join('\n') ||
+      '这个问题不需要进入排期 Agent。你可以告诉我：要安排什么任务、要查改删哪条日程，或者"继续"上次的任务。';
     appendMessage(activeState, 'assistant', answer);
     const data: AgentLlmAnswerResponse = {
       runId: `llm-${Date.now()}`,
       status: 'llmAnswer',
       rawInput: input,
       answer,
-      reason: route.reason
+      reason: classification.reason
     };
     recordAgentTurnTokenMetric(userId, {
       runId: data.runId,
@@ -428,23 +259,132 @@ export async function runAgentMainFlow({ userId, input, clarificationJson, onEve
       result: data,
       compactEvent
     });
-    await emitEvent(onEvent, { type: 'directAnswer', answer, reason: route.reason });
+    await emitEvent(onEvent, { type: 'directAnswer', answer, reason: classification.reason });
     await emitEvent(onEvent, { type: 'final', data });
     return data;
   }
 
-  const result = await runScheduleAgent({ userId, input, clarificationJson, onEvent });
-  mergeAgentResultIntoState(activeState, input, result);
+  // ==== 顺序执行操作（resume 优先、逐条落库、每个操作独立成败）====
+  const execution = await executeIntentOperations({
+    userId,
+    rawInput: input,
+    classification,
+    clarificationJson,
+    onEvent
+  });
+  const primary = execution.primary;
+
+  if (primary) {
+    // new_task / resume 产生了 Agent 业务响应：合并进会话状态（方案卡、待确认等）
+    mergeAgentResultIntoState(activeState, input, primary);
+    if (execution.report.trim()) {
+      appendMessage(activeState, 'assistant', execution.report);
+    }
+    const finalResponse = { ...primary, operationsReport: execution.report || undefined };
+    recordAgentTurnTokenMetric(userId, {
+      runId: (primary as { runId?: string }).runId ?? `ops-${Date.now()}`,
+      status: primary.status,
+      phase: 'scheduleAgent',
+      compressionEnabled: compressionSettings.enabled,
+      contextTokensBefore: turnContextBefore,
+      state: activeState,
+      result: finalResponse,
+      compactEvent
+    });
+    await emitEvent(onEvent, { type: 'final', data: finalResponse });
+    return finalResponse;
+  }
+
+  // 挂起分支（歧义/冲突）之外的其他操作结果：不能静默丢掉，拼在提问前一起汇报
+  const otherResultsReport = execution.results
+    .filter((result) => result.status !== 'needsUserInput' && result.status !== 'needsSelection' && result.status !== 'needsConflictResolution' && result.message)
+    .map((result) => result.message)
+    .join('\n');
+
+  // 增/改日程字段不足：返回与复杂排期一致的 needsUserInput，复用前端澄清面板
+  if (execution.pendingClarification) {
+    const pending = execution.pendingClarification;
+    const answer = otherResultsReport ? `${otherResultsReport}\n${pending.message}` : pending.message;
+    appendMessage(activeState, 'assistant', answer);
+    const data: AgentClarificationResponse = {
+      runId: `clarify-${Date.now()}`,
+      status: 'needsUserInput',
+      rawInput: input,
+      message: pending.message,
+      reasons: pending.reasons,
+      clarificationJson: pending.clarificationJson
+    };
+    await emitEvent(onEvent, { type: 'final', data });
+    return data;
+  }
+
+  // 有歧义操作（日程定位到多条候选）：返回结构化选项，由前端弹框让用户选
+  if (execution.pendingSelection) {
+    const pending = execution.pendingSelection;
+    const question = `${pending.message}：${pending.options
+      .map((option, index) => `${index + 1}. 「${option.title}」${option.timeText}`)
+      .join('；')}`;
+    const answer = otherResultsReport ? `${otherResultsReport}\n${question}` : question;
+    appendMessage(activeState, 'assistant', answer);
+    const data: AgentEventSelectionResponse = {
+      runId: `sel-${Date.now()}`,
+      status: 'needsSelection',
+      rawInput: input,
+      message: pending.message,
+      options: pending.options,
+      pendingOperation: pending.pendingOperation as AgentEventSelectionResponse['pendingOperation'],
+      reason: classification.reason
+    };
+    await emitEvent(onEvent, { type: 'directAnswer', answer, reason: classification.reason });
+    await emitEvent(onEvent, { type: 'final', data });
+    return data;
+  }
+
+  // 有冲突挂起操作：返回决策卡数据，由前端用主 agent 的冲突决策卡样式让用户选
+  if (execution.pendingConflict) {
+    const pending = execution.pendingConflict;
+    const conflictLines = pending.conflicts
+      .map((conflict, index) => `${index + 1}. 「${conflict.title}」${conflict.timeText}`)
+      .join('；');
+    const question = `${pending.message}：${conflictLines}。可以保留冲突、把原有日程后移 ${pending.suggestedShiftMinutes} 分钟，或取消。`;
+    const answer = otherResultsReport ? `${otherResultsReport}\n${question}` : question;
+    appendMessage(activeState, 'assistant', answer);
+    const data: AgentConflictResolutionResponse = {
+      runId: `conflict-${Date.now()}`,
+      status: 'needsConflictResolution',
+      rawInput: input,
+      message: pending.message,
+      conflicts: pending.conflicts,
+      suggestedShiftMinutes: pending.suggestedShiftMinutes,
+      pendingOperation: pending.pendingOperation as AgentConflictResolutionResponse['pendingOperation'],
+      reason: classification.reason
+    };
+    await emitEvent(onEvent, { type: 'directAnswer', answer, reason: classification.reason });
+    await emitEvent(onEvent, { type: 'final', data });
+    return data;
+  }
+
+  // 只有 CRUD / 恢复提示类操作：把每个操作的结果聚合成一条回复
+  const answer = execution.report.trim() || '操作已处理。';
+  appendMessage(activeState, 'assistant', answer);
+  const data: AgentLlmAnswerResponse = {
+    runId: `ops-${Date.now()}`,
+    status: 'llmAnswer',
+    rawInput: input,
+    answer,
+    reason: classification.reason
+  };
   recordAgentTurnTokenMetric(userId, {
-    runId: result.runId,
-    status: result.status,
-    phase: 'scheduleAgent',
+    runId: data.runId,
+    status: data.status,
+    phase: 'operationsExecuted',
     compressionEnabled: compressionSettings.enabled,
     contextTokensBefore: turnContextBefore,
     state: activeState,
-    result,
+    result: data,
     compactEvent
   });
-  await emitEvent(onEvent, { type: 'final', data: result });
-  return result;
+  await emitEvent(onEvent, { type: 'directAnswer', answer, reason: classification.reason });
+  await emitEvent(onEvent, { type: 'final', data });
+  return data;
 }

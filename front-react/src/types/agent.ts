@@ -88,13 +88,13 @@ export interface AgentConversationMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  kind: 'userInput' | 'directAnswer' | 'agentSummary' | 'command';
+  kind: 'userInput' | 'directAnswer' | 'agentSummary' | 'command' | 'agentCorrection';
   runId?: string;
   createdAt: string;
 }
 
 export type AgentJobType = 'schedule_plan' | 'resume_decision' | 'annotate_plan';
-export type AgentJobStatus = 'queued' | 'running' | 'waiting_user' | 'succeeded' | 'failed' | 'canceled';
+export type AgentJobStatus = 'queued' | 'running' | 'waiting_user' | 'succeeded' | 'failed' | 'canceled' | 'abandoned';
 
 export interface AgentJob {
   id: string;
@@ -112,6 +112,8 @@ export interface AgentJob {
   lockedAt: string | null;
   lockedBy: string | null;
   heartbeatAt: string | null;
+  progressUpdatedAt: string | null;
+  maxExecutionMs: number | null;
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
@@ -137,7 +139,7 @@ export interface AgentCheckpoint {
   runId: string;
   userId: string;
   jobId: string | null;
-  type: 'required_fields' | 'schedule_decision' | 'conflict_decision' | 'final_confirm' | 'annotation_review';
+  type: 'required_fields' | 'schedule_decision' | 'conflict_decision' | 'final_confirm' | 'annotation_review' | 'manual_pause';
   stepName: string;
   prompt: string;
   options: unknown | null;

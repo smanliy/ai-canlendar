@@ -175,6 +175,32 @@ export interface AgentLlmAnswerResponse {
   reason: string;
 }
 
+export interface AgentEventSelectionOption {
+  eventId: string;
+  title: string;
+  timeText: string;
+}
+
+/**
+ * 日程定位歧义响应（三级定位的第 3 级）：
+ * 前端收到后弹出选项框；用户选定后把 pendingOperation + eventId
+ * POST 到 /agent/event-selection 完成操作。
+ */
+export interface AgentEventSelectionResponse {
+  runId: string;
+  status: 'needsSelection';
+  rawInput: string;
+  message: string;
+  options: AgentEventSelectionOption[];
+  pendingOperation: {
+    kind: 'event_update' | 'event_delete';
+    target?: Record<string, unknown>;
+    patch?: Record<string, unknown>;
+    allowConflict?: boolean;
+  };
+  reason?: string;
+}
+
 export interface AgentAutoCreatedResponse {
   runId: string;
   status: 'autoCreated';
@@ -190,7 +216,35 @@ export interface AgentAutoCreatedResponse {
   llmUsageByStep?: Record<string, TokenUsageSummary>;
 }
 
-export type AgentCreateRunResponse = AgentRunResponse | AgentClarificationResponse | AgentCommandResponse | AgentLlmAnswerResponse | AgentAutoCreatedResponse;
+export type AgentCreateRunResponse = AgentRunResponse | AgentClarificationResponse | AgentCommandResponse | AgentLlmAnswerResponse | AgentAutoCreatedResponse | AgentEventSelectionResponse | AgentConflictResolutionResponse;
+
+export interface AgentEventConflictOption {
+  eventId: string;
+  title: string;
+  timeText: string;
+}
+
+/**
+ * 快速路径冲突挂起：检测到时间重叠时返回决策卡数据，
+ * 前端用主 agent 的决策卡样式让用户选（保留冲突 / 原有日程后移 N 分钟 / 取消）。
+ */
+export interface AgentConflictResolutionResponse {
+  runId: string;
+  status: 'needsConflictResolution';
+  rawInput: string;
+  message: string;
+  conflicts: AgentEventConflictOption[];
+  /** 建议后移分钟数（把冲突日程推到新时段之后的最小位移，前端可编辑） */
+  suggestedShiftMinutes: number;
+  pendingOperation: {
+    kind: 'event_create' | 'event_update';
+    event?: Record<string, unknown>;
+    target?: Record<string, unknown>;
+    patch?: Record<string, unknown>;
+    allowConflict?: boolean;
+  };
+  reason?: string;
+}
 
 export interface AgentDecisionResponse {
   runId: string;

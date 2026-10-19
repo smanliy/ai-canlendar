@@ -7,6 +7,8 @@ import { planAtomicTasksWithPython, resumeScheduleWithPython, sendTaskToPythonAg
 import type { AgentAnnotationResponse, AgentAutoCreatedResponse, AgentClarificationResponse, AgentConflict, AgentDecisionResponse, AgentRunResponse, AgentUserPreference, ParsedScheduleTask, ParsedSubtask, PlanItem, SchedulePlanOption } from './agent.types';
 import type { AgentMainFlowEventHandler } from './agent-main-flow';
 import { findPlanningSession, savePlanningSession, updatePlanningSessionAtomicPlan } from './agent-planning-session.repository';
+import { nowIsoWithOffset } from './intent-classifier';
+import { createCheckpoint } from './agent-checkpoint.repository';
 
 interface RunScheduleAgentInput {
   userId: string;
@@ -125,8 +127,8 @@ async function getPreference(userId: string): Promise<UserPreferenceLike> {
     update: {},
     create: {
       id: userId,
-      phone: `bridge-${userId}`,
-      nickname: 'OpenClaw Bridge',
+      phone: `system-${userId}`,
+      nickname: 'System User',
       preference: {
         create: {}
       }
@@ -1310,18 +1312,34 @@ export async function runScheduleAgent({ userId, input, clarificationJson, onEve
     });
     await emitStepStarted(onEvent, 'step-8', '正在写入日历');
     const eventPayloads = selectedPlan.items.map((item) => planItemToEventPayload(item, runId));
-    await eventService.bulkCreateEvents(userId, { events: eventPayloads, agentRunId: runId });
+    const createdEvents = await eventService.bulkCreateEvents(userId, { events: eventPayloads, agentRunId: runId });
+    // 落库后写断点快照（事件驱动）：记录本次 run 已写入的日程 id。
+    // bulkCreateEvents 内部有按 agentRunId 的幂等守卫，恢复重跑不会重复建日程。
+    await createCheckpoint({
+      runId,
+      userId,
+      type: 'events_persisted',
+      stepName: 'events_persisted',
+      prompt: `已写入 ${createdEvents.length} 条日程`,
+      options: [],
+      resumePayload: { runId },
+      stateSnapshot: {
+        persistedEventIds: createdEvents.map((event) => event.id),
+        persistedCount: createdEvents.length,
+        persistedAt: new Date().toISOString()
+      }
+    });
     await emitEvent(onEvent, {
       type: 'stepSucceeded',
       stepId: 'step-8',
-      output: { created: eventPayloads.length }
+      output: { created: createdEvents.length }
     });
     return {
       runId,
       status: 'autoCreated',
       rawInput: enrichedInput,
-      message: `已找到理想时间并写入日历，共创建 ${eventPayloads.length} 条日程。`,
-      createdCount: eventPayloads.length,
+      message: `已找到理想时间并写入日历，共创建 ${createdEvents.length} 条日程。`,
+      createdCount: createdEvents.length,
       plan: selectedPlan,
       calendarEventsToolResult: atomicPlan.calendarEventsToolResult,
       freeWindowsToolResult: atomicPlan.freeWindowsToolResult,

@@ -90,6 +90,28 @@ export interface PythonResumePayload {
   planningState: Record<string, unknown>;
 }
 
+export interface PythonEventDraftCheckPayload {
+  userId: string;
+  rawInput: string;
+  userPreference: AgentUserPreference;
+  draft: {
+    taskId?: string;
+    title: string;
+    startIso: string;
+    endIso: string;
+    excludeEventId?: string;
+  };
+}
+
+export interface PythonEventDraftCheckResult {
+  status: 'ready' | 'needsDecision' | 'failed';
+  draft: Record<string, unknown>;
+  calendarEventsToolResult?: unknown;
+  freeWindowsToolResult?: unknown;
+  conflictCheckResult?: unknown;
+  errors?: string[];
+}
+
 export interface PythonResumeResult {
   status: 'ready' | 'failed' | 'unsupported';
   message?: string;
@@ -203,6 +225,21 @@ export async function planAtomicTasksWithPython(payload: PythonPlanPayload): Pro
     status: result.status,
     taskCount: result.atomicTasks?.length ?? 0,
     feasibility: result.feasibility
+  });
+  return result;
+}
+
+export async function checkEventDraftWithPython(payload: PythonEventDraftCheckPayload): Promise<PythonEventDraftCheckResult> {
+  console.log('[Node -> Python] Checking event draft with Python tools:', {
+    userId: payload.userId,
+    rawInput: payload.rawInput,
+    draft: payload.draft
+  });
+
+  const result = await postPythonJson<PythonEventDraftCheckResult>('/agent/event-draft-check', payload);
+  console.log('[Node <- Python] Event draft check result:', {
+    status: result.status,
+    conflictCheckResult: result.conflictCheckResult
   });
   return result;
 }

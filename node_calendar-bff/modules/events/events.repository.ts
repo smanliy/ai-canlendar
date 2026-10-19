@@ -101,7 +101,35 @@ export function findLatestAgentRunId(userId: string, db?: DbClient) {
       createdAt: 'desc'
     },
     select: {
-      agentRunId: true
+      agentRunId: true,
+      createdAt: true
+    }
+  });
+}
+
+export function countAgentEventsByRunId(userId: string, agentRunId: string, db?: DbClient) {
+  const client = getDb(db);
+  return client.calendarEvent.count({
+    where: {
+      userId,
+      agentRunId,
+      source: 'agent',
+      deletedAt: null
+    }
+  });
+}
+
+/** 按 agentRunId 查已有日程：落库幂等检查（恢复重跑时避免重复建日程） */
+export function findEventsByAgentRunId(userId: string, agentRunId: string, db?: DbClient) {
+  const client = getDb(db);
+  return client.calendarEvent.findMany({
+    where: {
+      userId,
+      agentRunId,
+      deletedAt: null
+    },
+    orderBy: {
+      startTime: 'asc'
     }
   });
 }

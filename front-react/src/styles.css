@@ -4455,6 +4455,22 @@ body {
   transform: rotate(-1.2deg);
 }
 
+.agent-planner-board .chat-input-area .agent-send-button-stop.ant-btn-primary {
+  min-width: 2.35rem;
+  width: 2.35rem;
+  padding: 0;
+  border-radius: 999px;
+  justify-content: center;
+}
+
+.agent-planner-board .chat-input-area .agent-send-button-stop.ant-btn-primary .ant-btn-icon {
+  margin-inline-end: 0;
+}
+
+.agent-planner-board .chat-input-area .agent-send-button-stop.ant-btn-primary .ant-btn-icon + span {
+  display: none;
+}
+
 .agent-planner-board .chat-input-area .agent-send-button.ant-btn-primary::before {
   content: "";
   position: absolute;
@@ -5526,4 +5542,24 @@ body {
   .token-node-row em {
     grid-column: 1 / -1;
   }
+}
+
+/* ===== 快速路径时间冲突决策卡（与主 agent 决策卡同款样式）===== */
+.agent-decision-card.agent-decision-card-shift {
+  cursor: default;
+}
+
+.agent-shift-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.2rem;
+}
+
+.agent-shift-input-row .ant-input-number {
+  width: 5.5rem;
+}
+
+.agent-shift-unit {
+  font-size: 0.76rem;
 }

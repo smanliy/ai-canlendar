@@ -108,6 +108,117 @@ export interface AgentRollbackPayload {
   version?: number;
 }
 
+export interface AgentEventSelectionPayload {
+  eventId: string;
+  operation: {
+    kind: 'event_update' | 'event_delete';
+    target?: Record<string, unknown>;
+    patch?: Record<string, unknown>;
+    allowConflict?: boolean;
+  };
+}
+
+export interface AgentEventConflictResolutionPayload {
+  action: 'keep_conflict' | 'shift_existing' | 'cancel';
+  /** action=shift_existing 时必填：冲突日程后移的分钟数（用户在决策卡里编辑） */
+  shiftMinutes?: number;
+  /** action=shift_existing 时必填：要后移的冲突日程 id 列表 */
+  conflictEventIds?: string[];
+  operation: {
+    kind: 'event_create' | 'event_update';
+    event?: Record<string, unknown>;
+    target?: Record<string, unknown>;
+    patch?: Record<string, unknown>;
+    allowConflict?: boolean;
+  };
+}
+
+export function validateAgentEventConflictResolutionPayload(payload: unknown): AgentEventConflictResolutionPayload {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Request body is required');
+  }
+  const action = (payload as { action?: unknown }).action;
+  if (action !== 'keep_conflict' && action !== 'shift_existing' && action !== 'cancel') {
+    throw new Error('action must be keep_conflict, shift_existing or cancel');
+  }
+  const operation = (payload as { operation?: unknown }).operation;
+  if (!operation || typeof operation !== 'object') {
+    if (action === 'cancel') {
+      return { action, operation: { kind: 'event_create' } };
+    }
+    throw new Error('operation is required');
+  }
+  const kind = (operation as { kind?: unknown }).kind;
+  if (kind !== 'event_create' && kind !== 'event_update') {
+    throw new Error('operation.kind must be event_create or event_update');
+  }
+  const record = operation as Record<string, unknown>;
+  const readOptionalRecord = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+
+  const shiftMinutes = (payload as { shiftMinutes?: unknown }).shiftMinutes;
+  const conflictEventIds = (payload as { conflictEventIds?: unknown }).conflictEventIds;
+  if (action === 'shift_existing') {
+    if (typeof shiftMinutes !== 'number' || !Number.isFinite(shiftMinutes) || shiftMinutes <= 0) {
+      throw new Error('shiftMinutes must be a positive number');
+    }
+    if (!Array.isArray(conflictEventIds) || conflictEventIds.length === 0) {
+      throw new Error('conflictEventIds is required for shift_existing');
+    }
+  }
+
+  return {
+    action,
+    shiftMinutes: typeof shiftMinutes === 'number' && Number.isFinite(shiftMinutes) ? shiftMinutes : undefined,
+    conflictEventIds: Array.isArray(conflictEventIds)
+      ? conflictEventIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0).map((id) => id.trim())
+      : undefined,
+    operation: {
+      kind,
+      event: readOptionalRecord(record.event),
+      target: readOptionalRecord(record.target),
+      patch: readOptionalRecord(record.patch),
+      allowConflict: record.allowConflict === true
+    }
+  };
+}
+
+export function validateAgentEventSelectionPayload(payload: unknown): AgentEventSelectionPayload {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Request body is required');
+  }
+  const eventId = (payload as { eventId?: unknown }).eventId;
+  const operation = (payload as { operation?: unknown }).operation;
+  if (typeof eventId !== 'string' || !eventId.trim()) {
+    throw new Error('eventId is required');
+  }
+  if (!operation || typeof operation !== 'object') {
+    throw new Error('operation is required');
+  }
+  const kind = (operation as { kind?: unknown }).kind;
+  if (kind !== 'event_update' && kind !== 'event_delete') {
+    throw new Error('operation.kind must be event_update or event_delete');
+  }
+  const target = (operation as { target?: unknown }).target;
+  const patch = (operation as { patch?: unknown }).patch;
+  const allowConflict = (operation as { allowConflict?: unknown }).allowConflict;
+  return {
+    eventId: eventId.trim(),
+    operation: {
+      kind,
+      target:
+        target && typeof target === 'object' && !Array.isArray(target)
+          ? (target as Record<string, unknown>)
+          : undefined,
+      patch:
+        patch && typeof patch === 'object' && !Array.isArray(patch)
+          ? (patch as Record<string, unknown>)
+          : undefined,
+      allowConflict: allowConflict === true
+    }
+  };
+}
+
 export function validateAgentRollbackPayload(payload: unknown): AgentRollbackPayload {
   if (payload === undefined || payload === null) return {};
   if (typeof payload !== 'object') {
@@ -123,7 +234,7 @@ export function validateAgentRollbackPayload(payload: unknown): AgentRollbackPay
 
 export interface AgentConversationMessagePayload {
   role: 'user' | 'assistant';
-  kind: 'userInput' | 'directAnswer' | 'agentSummary' | 'command';
+  kind: 'userInput' | 'directAnswer' | 'agentSummary' | 'command' | 'agentCorrection';
   content: string;
   runId?: string;
   payload?: unknown;
@@ -143,7 +254,7 @@ export function validateAgentConversationMessagePayload(payload: unknown): Agent
   if (role !== 'user' && role !== 'assistant') {
     throw new Error('role must be user or assistant');
   }
-  if (!['userInput', 'directAnswer', 'agentSummary', 'command'].includes(String(kind))) {
+  if (!['userInput', 'directAnswer', 'agentSummary', 'command', 'agentCorrection'].includes(String(kind))) {
     throw new Error('kind is invalid');
   }
   if (typeof content !== 'string' || !content.trim()) {

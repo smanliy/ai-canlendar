@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 
 import { getAgentHttpStatus } from './agent.errors';
+import { registerSseSubscriber, unregisterSseSubscriber } from './agent.abort';
 import { runAgentMainFlow, type AgentMainFlowEvent } from './agent-main-flow';
 import * as agentService from './agent.service';
 import { validateCreateAgentRunPayload } from './agent.schema';
@@ -93,6 +94,11 @@ export async function streamJobEvents(req: Request, res: Response): Promise<void
     return;
   }
 
+  // 订阅者登记：用于异常退出清理判断"任务还有人看吗"。
+  // tabId 由前端生成（crypto.randomUUID），同一 job 多标签页各占一个名额。
+  const tabId = String(req.query.tabId || `sse-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  registerSseSubscriber(jobId, tabId);
+
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -102,6 +108,7 @@ export async function streamJobEvents(req: Request, res: Response): Promise<void
   let closed = false;
   req.on('close', () => {
     closed = true;
+    unregisterSseSubscriber(jobId, tabId);
   });
 
   try {

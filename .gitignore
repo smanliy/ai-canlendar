@@ -1,4 +1,57 @@
+# Environment and secrets
 .env
 **/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python
+.venv/
+**/.venv/
+venv/
+**/venv/
 __pycache__/
-*.pyc
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+**/.pytest_cache/
+
+# Build output and caches
+dist/
+**/dist/
+build/
+**/build/
+.vite/
+**/.vite/
+*.tsbuildinfo
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local tools and editor state
+.local-tools/
+.workbuddy/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+
+# Local scratch files
+/a.html
+/image.png
+
+# OS files
+.DS_Store
+Thumbs.db

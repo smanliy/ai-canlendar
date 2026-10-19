@@ -97,3 +97,12 @@ export async function undoAgentRunEvents(req: Request, res: Response): Promise<v
     sendError(res, error, '撤销 Agent 日程失败');
   }
 }
+
+export async function getLatestAgentRun(req: Request, res: Response): Promise<void> {
+  try {
+    const data = await eventService.getLatestAgentRunInfo(getUserId(req));
+    res.json({ code: 0, message: 'ok', data });
+  } catch (error) {
+    sendError(res, error, '查询最新可撤回轮次失败');
+  }
+}

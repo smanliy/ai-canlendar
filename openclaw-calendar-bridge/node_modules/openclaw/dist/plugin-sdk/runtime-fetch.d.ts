@@ -1,2 +1,0 @@
-import { i as isMockedFetch, n as fetchWithRuntimeDispatcher, r as fetchWithRuntimeDispatcherOrMockedGlobal, t as DispatcherAwareRequestInit } from "./runtime-fetch-BXfVBfRP.js";
-export { type DispatcherAwareRequestInit, fetchWithRuntimeDispatcher, fetchWithRuntimeDispatcherOrMockedGlobal, isMockedFetch };

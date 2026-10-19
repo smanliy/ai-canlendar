@@ -3,6 +3,7 @@ import os
 import re
 import unicodedata
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,94 @@ def calculate_available_free_windows(
         user_preference=user_preference,
         draft_allocations=[],
     )
+
+
+def check_event_draft(payload: dict[str, Any]) -> dict[str, Any]:
+    """检查单条日程草案的字段、空闲窗口和时间冲突。
+
+    这是简单 event_create/event_update 使用的轻量 Agent 节点：
+    不经过复杂任务拆解，但复用已有日程查询、空闲时间计算和冲突检测工具。
+    """
+    draft = payload.get("draft") if isinstance(payload.get("draft"), dict) else {}
+    user_preference = payload.get("userPreference") if isinstance(payload.get("userPreference"), dict) else {}
+    title = str(draft.get("title") or "").strip()
+    start_iso = str(draft.get("startIso") or "").strip()
+    end_iso = str(draft.get("endIso") or "").strip()
+    exclude_event_id = str(draft.get("excludeEventId") or "").strip()
+
+    try:
+        start = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+    except ValueError as error:
+        return {
+            "status": "failed",
+            "draft": draft,
+            "calendarEventsToolResult": {},
+            "freeWindowsToolResult": {},
+            "conflictCheckResult": {},
+            "errors": [f"单条日程草案时间格式无效: {error}"],
+        }
+
+    if not title or end <= start:
+        return {
+            "status": "failed",
+            "draft": draft,
+            "calendarEventsToolResult": {},
+            "freeWindowsToolResult": {},
+            "conflictCheckResult": {},
+            "errors": ["单条日程草案缺少标题，或结束时间不晚于开始时间"],
+        }
+
+    range_start = (start - timedelta(days=1)).isoformat()
+    range_end = (end + timedelta(days=1)).isoformat()
+    calendar_result = calendar_events_query(
+        str(payload.get("userId") or "").strip(),
+        range_start,
+        range_end,
+    )
+    calendar_events = [
+        event
+        for event in calendar_result.get("events", [])
+        if not exclude_event_id or str(event.get("id") or "") != exclude_event_id
+    ]
+
+    free_windows_result = calculate_free_windows(
+        start_iso=range_start,
+        end_iso=range_end,
+        calendar_events=calendar_events,
+        user_preference=user_preference,
+        draft_allocations=[],
+    )
+    draft_allocation = [
+        {
+            "taskId": str(draft.get("taskId") or title),
+            "title": title,
+            "startIso": start.isoformat(),
+            "endIso": end.isoformat(),
+        }
+    ]
+    conflict_result = check_schedule_conflicts(
+        draft_allocations=draft_allocation,
+        calendar_events=calendar_events,
+        decisions=[],
+    )
+    errors = [
+        *([str(item) for item in calendar_result.get("errors", [])] if isinstance(calendar_result.get("errors"), list) else []),
+        *([str(item) for item in free_windows_result.get("errors", [])] if isinstance(free_windows_result.get("errors"), list) else []),
+        *([str(item) for item in conflict_result.get("errors", [])] if isinstance(conflict_result.get("errors"), list) else []),
+    ]
+    return {
+        "status": "needsDecision" if conflict_result.get("status") == "needsDecision" else "ready",
+        "draft": draft_allocation[0],
+        "calendarEventsToolResult": calendar_result,
+        "freeWindowsToolResult": free_windows_result,
+        "conflictCheckResult": conflict_result,
+        "errors": errors,
+    }
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:

@@ -1,0 +1,48 @@
+[
+  {
+    "id": "A09",
+    "category": "原子提醒",
+    "input": "下周一下午三点给我排一个聚会",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "聚会",
+          "startTime": "2026-09-14T15:00:00+08:00",
+          "endTime": "2026-09-14T16:00:00+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求下周一下午三点创建聚会日程，属于直接创建单条日程。",
+    "fallbackUsed": false,
+    "latencyMs": 1249
+  },
+  {
+    "id": "A10",
+    "category": "原子提醒",
+    "input": "明晚7点安排一个聚餐",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "聚餐",
+          "startTime": "2026-09-09T19:00:00+08:00",
+          "endTime": "2026-09-09T21:00:00+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户明确要求明晚7点安排聚餐，属于直接创建单条日程，无冲突表述。",
+    "fallbackUsed": false,
+    "latencyMs": 1230
+  }
+]

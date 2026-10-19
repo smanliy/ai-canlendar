@@ -57,7 +57,8 @@ export async function createScheduleOperationLog(input: {
       "operateType",
       "targetScheduleId",
       "beforeSnapshot",
-      "afterSnapshot"
+      "afterSnapshot",
+      "updatedAt"
     )
     VALUES (
       ${id},
@@ -67,7 +68,8 @@ export async function createScheduleOperationLog(input: {
       ${input.operateType},
       ${input.targetScheduleId},
       ${beforeSnapshotJson}::jsonb,
-      ${afterSnapshotJson}::jsonb
+      ${afterSnapshotJson}::jsonb,
+      now()
     )
     RETURNING *
   `;

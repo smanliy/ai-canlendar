@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import { useAuthStore } from '../stores/authStore';
 import type {
   AgentJob,
+  AgentCheckpoint,
   AgentJobDetail,
   AgentJobEvent,
   AgentConversationMessage,
@@ -29,8 +30,32 @@ interface ApiResponse<T> {
   data: T;
 }
 
-export type SchedulePlanResult =
-  | {
+export interface EventSelectionOptionView {
+  eventId: string;
+  title: string;
+  timeText: string;
+}
+
+export interface EventConflictOptionView {
+  eventId: string;
+  title: string;
+  timeText: string;
+}
+
+export interface PendingEventConflictView {
+  message: string;
+  conflicts: EventConflictOptionView[];
+  suggestedShiftMinutes: number;
+  pendingOperation: {
+    kind: 'event_create' | 'event_update';
+    event?: Record<string, unknown>;
+    target?: Record<string, unknown>;
+    patch?: Record<string, unknown>;
+    allowConflict?: boolean;
+  };
+}
+
+export type SchedulePlanResult =  | {
       status: 'commandResult';
       runId: string;
       command: 'clear' | 'compact';
@@ -43,6 +68,36 @@ export type SchedulePlanResult =
       rawInput: string;
       answer: string;
       reason: string;
+    }
+  | {
+      status: 'needsSelection';
+      runId: string;
+      rawInput: string;
+      message: string;
+      options: EventSelectionOptionView[];
+      pendingOperation: {
+        kind: 'event_update' | 'event_delete';
+        target?: Record<string, unknown>;
+        patch?: Record<string, unknown>;
+        allowConflict?: boolean;
+      };
+      reason?: string;
+    }
+  | {
+      status: 'needsConflictResolution';
+      runId: string;
+      rawInput: string;
+      message: string;
+      conflicts: EventConflictOptionView[];
+      suggestedShiftMinutes: number;
+      pendingOperation: {
+        kind: 'event_create' | 'event_update';
+        event?: Record<string, unknown>;
+        target?: Record<string, unknown>;
+        patch?: Record<string, unknown>;
+        allowConflict?: boolean;
+      };
+      reason?: string;
     }
   | {
       status: 'autoCreated';
@@ -106,6 +161,23 @@ export interface PlanAnnotationPayload {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 const CSRF_COOKIE_NAME = 'chrono_csrf_token';
+
+/** 当前标签页唯一标识：SSE 订阅者登记 + 多标签页防误杀 */
+export const AGENT_TAB_ID = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+/** 页面重开恢复用：BFF /agent/jobs/active 的返回结构 */
+export interface ActiveAgentJob {
+  job: {
+    id: string;
+    runId: string;
+    type: string;
+    status: string;
+    input: unknown;
+    createdAt: string;
+  };
+  checkpoint: AgentCheckpoint | null;
+  events: AgentJobEvent[];
+}
 
 const stepNames = ['解析用户输入', '判断是否拆分', '查询已有日程', '计算空闲时间', '生成排期方案', '检测冲突', '等待用户确认', '执行写入日历'];
 
@@ -264,6 +336,32 @@ async function replayNonStreamResult(result: SchedulePlanResult, onEvent: (event
     return;
   }
 
+  if (result.status === 'needsSelection') {
+    const optionLines = result.options
+      .map((option, index) => `${index + 1}.「${option.title}」${option.timeText}`)
+      .join('；');
+    await onEvent({
+      type: 'directAnswer',
+      answer: `${result.message}：${optionLines}`,
+      reason: result.reason ?? '日程定位存在多条候选，等待用户选择'
+    });
+    await onEvent({ type: 'final', data: result });
+    return;
+  }
+
+  if (result.status === 'needsConflictResolution') {
+    const conflictLines = result.conflicts
+      .map((conflict, index) => `${index + 1}.「${conflict.title}」${conflict.timeText}`)
+      .join('；');
+    await onEvent({
+      type: 'directAnswer',
+      answer: `${result.message}：${conflictLines}。可以保留冲突、把原有日程后移 ${result.suggestedShiftMinutes} 分钟，或取消。`,
+      reason: result.reason ?? '检测到时间冲突，等待用户决策'
+    });
+    await onEvent({ type: 'final', data: result });
+    return;
+  }
+
   if (result.status === 'autoCreated') {
     await onEvent({
       type: 'directAnswer',
@@ -389,6 +487,10 @@ export const agentApi = {
     return request<AgentJob[]>('/agent/jobs');
   },
 
+  async getActiveJobs(): Promise<ActiveAgentJob[]> {
+    return request<ActiveAgentJob[]>('/agent/jobs/active');
+  },
+
   async getJob(jobId: string): Promise<AgentJobDetail> {
     if (!jobId) throw new Error('缺少 JobId');
     return request<AgentJobDetail>(`/agent/jobs/${encodeURIComponent(jobId)}`);
@@ -411,10 +513,46 @@ export const agentApi = {
     });
   },
 
-  async cancelJob(jobId: string): Promise<{ canceled: true }> {
+  async cancelJob(jobId: string): Promise<{ canceled: true; checkpoint?: AgentCheckpoint | null }> {
     if (!jobId) throw new Error('缺少 JobId');
     return request(`/agent/jobs/${encodeURIComponent(jobId)}/cancel`, {
       method: 'POST'
+    });
+  },
+
+  /**
+   * 用户在选项框里点定某条日程后回传 BFF，带着 eventId 重跑该改/删操作。
+   */
+  async resolveEventSelection(payload: {
+    eventId: string;
+    operation: {
+      kind: 'event_update' | 'event_delete';
+      target?: Record<string, unknown>;
+      patch?: Record<string, unknown>;
+      allowConflict?: boolean;
+    };
+  }): Promise<{ runId: string; status: 'llmAnswer'; answer: string; reason: string }> {
+    if (!payload.eventId) throw new Error('缺少日程选择');
+    return request('/agent/event-selection', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  /**
+   * 用户在冲突决策卡上做出选择后回传 BFF：
+   * keep_conflict 保留冲突照常执行；shift_existing 先把冲突日程后移 N 分钟再执行；cancel 取消。
+   */
+  async resolveEventConflict(payload: {
+    action: 'keep_conflict' | 'shift_existing' | 'cancel';
+    shiftMinutes?: number;
+    conflictEventIds?: string[];
+    operation: PendingEventConflictView['pendingOperation'];
+  }): Promise<{ runId: string; status: 'llmAnswer'; answer: string; reason: string }> {
+    if (!payload.operation && payload.action !== 'cancel') throw new Error('缺少待执行操作');
+    return request('/agent/event-conflict', {
+      method: 'POST',
+      body: JSON.stringify(payload)
     });
   },
 
@@ -434,13 +572,16 @@ export const agentApi = {
 
     let response: Response;
     try {
-      response = await fetch(`${API_BASE_URL}/agent/jobs/${encodeURIComponent(jobId)}/events/stream`, {
+      response = await fetch(`${API_BASE_URL}/agent/jobs/${encodeURIComponent(jobId)}/events/stream?tabId=${encodeURIComponent(AGENT_TAB_ID)}`, {
         method: 'GET',
         credentials: 'include',
         headers: buildHeaders({ method: 'GET' }, token),
         signal
       });
     } catch {
+      if (signal?.aborted) {
+        throw new DOMException('Agent job stream aborted', 'AbortError');
+      }
       throw new Error('无法连接 Node 后端服务，请确认 node_calendar-bff 已启动');
     }
 
@@ -671,5 +812,25 @@ export const agentApi = {
       createdAt: step?.createdAt ?? now(),
       updatedAt: step?.updatedAt ?? now()
     };
+  },
+
+  /**
+   * 异常退出信号（pagehide 时调用）。
+   * sendBeacon 无法携带 Authorization 头 → token 放 body，由 BFF beacon 端点自行校验；
+   * 默认 Content-Type 为 text/plain → BFF 用 express.text() 解析。
+   * 注意：这是 fire-and-forget，失败静默（由服务端孤儿回收器兜底）。
+   */
+  sendJobAbortBeacon(jobId: string, reason = 'abnormal_exit'): void {
+    if (!jobId) return;
+    const token = useAuthStore.getState().token;
+    if (!token) return;
+    try {
+      navigator.sendBeacon(
+        `${API_BASE_URL}/agent/jobs/abort`,
+        JSON.stringify({ jobId, token, tabId: AGENT_TAB_ID, reason })
+      );
+    } catch {
+      // beacon 失败是预期内的（崩溃场景），服务端 reaper 会兜底
+    }
   }
 };

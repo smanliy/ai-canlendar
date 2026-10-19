@@ -1,0 +1,1032 @@
+[
+  {
+    "id": "A01",
+    "category": "原子提醒",
+    "input": "三分钟后提醒我洗澡",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我洗澡",
+          "startTime": "2026-09-08T20:34:13+08:00",
+          "endTime": "2026-09-08T20:49:13+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求三分钟后提醒洗澡，是明确的相对时间提醒，直接创建日程事件。",
+    "fallbackUsed": false,
+    "latencyMs": 1261
+  },
+  {
+    "id": "A02",
+    "category": "原子提醒",
+    "input": "半小时后提醒我开会",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我开会",
+          "startTime": "2026-09-08T21:01:13+08:00",
+          "endTime": "2026-09-08T21:16:13+08:00",
+          "category": "工作",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求半小时后提醒开会，是明确的相对时间提醒，直接创建日程。",
+    "fallbackUsed": false,
+    "latencyMs": 1250
+  },
+  {
+    "id": "A03",
+    "category": "原子提醒",
+    "input": "一个小时后提醒我吃药",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我吃药",
+          "startTime": "2026-09-08T21:31:13+08:00",
+          "endTime": "2026-09-08T21:46:13+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求一小时后提醒吃药，是明确的相对时间提醒，属于event_create。",
+    "fallbackUsed": false,
+    "latencyMs": 1251
+  },
+  {
+    "id": "A04",
+    "category": "原子提醒",
+    "input": "二十分钟后提醒我喝水",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我喝水",
+          "startTime": "2026-09-08T20:51:13+08:00",
+          "endTime": "2026-09-08T21:06:13+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求二十分钟后提醒喝水，是明确的相对时间提醒，直接创建日程。",
+    "fallbackUsed": false,
+    "latencyMs": 1408
+  },
+  {
+    "id": "A05",
+    "category": "原子提醒",
+    "input": "今晚8点提醒我打电话给妈妈",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我打电话给妈妈",
+          "startTime": "2026-09-08T20:00:00+08:00",
+          "endTime": "2026-09-08T20:15:00+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求今晚8点提醒打电话给妈妈，是明确的单条提醒，属于event_create。",
+    "fallbackUsed": false,
+    "latencyMs": 1334
+  },
+  {
+    "id": "A06",
+    "category": "原子提醒",
+    "input": "明天上午十点提醒我交周报",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "交周报",
+          "startTime": "2026-09-09T10:00:00+08:00",
+          "endTime": "2026-09-09T10:15:00+08:00",
+          "category": "工作",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求明天上午十点提醒交周报，是明确的单条提醒，属于event_create。",
+    "fallbackUsed": false,
+    "latencyMs": 1364
+  },
+  {
+    "id": "A07",
+    "category": "原子提醒",
+    "input": "后天下午3点提醒我面试",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "面试",
+          "startTime": "2026-09-10T15:00:00+08:00",
+          "endTime": "2026-09-10T16:00:00+08:00",
+          "category": "面试",
+          "priority": "高",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户明确给出日期和时间点，创建单条日程，面试默认时长60分钟。",
+    "fallbackUsed": false,
+    "latencyMs": 1516
+  },
+  {
+    "id": "A08",
+    "category": "原子提醒",
+    "input": "10分钟后提醒我起身活动一下",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我起身活动一下",
+          "startTime": "2026-09-08T20:41:15+08:00",
+          "endTime": "2026-09-08T20:56:15+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求10分钟后提醒，属于相对时间提醒，直接创建日程事件。",
+    "fallbackUsed": false,
+    "latencyMs": 1081
+  },
+  {
+    "id": "A09",
+    "category": "原子提醒",
+    "input": "下周一下午三点给我排一个聚会",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "聚会",
+          "startTime": "2026-09-14T15:00:00+08:00",
+          "endTime": "2026-09-14T17:00:00+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户明确给出日期和时间点，直接创建单条日程，默认时长120分钟。",
+    "fallbackUsed": false,
+    "latencyMs": 1404
+  },
+  {
+    "id": "A10",
+    "category": "原子提醒",
+    "input": "明晚7点安排一个聚餐",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "聚餐",
+          "startTime": "2026-09-09T19:00:00+08:00",
+          "endTime": "2026-09-09T21:00:00+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户明确给出日期时间点，直接创建聚餐日程，默认时长120分钟。",
+    "fallbackUsed": false,
+    "latencyMs": 1236
+  },
+  {
+    "id": "B01",
+    "category": "新任务拆分",
+    "input": "帮我准备周五的项目汇报",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "new_task",
+        "taskText": "准备周五的项目汇报"
+      }
+    ],
+    "reason": "用户提出新任务，未指定具体时间，需要排期和拆分",
+    "fallbackUsed": false,
+    "latencyMs": 694
+  },
+  {
+    "id": "B02",
+    "category": "新任务拆分",
+    "input": "我要在下周三前完成毕业论文初稿，帮我安排一下",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "new_task",
+        "taskText": "在下周三前完成毕业论文初稿，帮我安排一下"
+      }
+    ],
+    "reason": "用户提出新的排期需求，需要安排完成毕业论文初稿，属于新任务。",
+    "fallbackUsed": false,
+    "latencyMs": 1086
+  },
+  {
+    "id": "B03",
+    "category": "新任务拆分",
+    "input": "帮我规划一下国庆旅行",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "new_task",
+        "taskText": "规划国庆旅行"
+      }
+    ],
+    "reason": "用户提出新的排期/安排需求，没有明确时间点，属于需要排期和拆分的任务。",
+    "fallbackUsed": false,
+    "latencyMs": 1003
+  },
+  {
+    "id": "B04",
+    "category": "新任务拆分",
+    "input": "三天内入门Python数据分析，帮我排期",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "new_task",
+        "taskText": "三天内入门Python数据分析，帮我排期"
+      }
+    ],
+    "reason": "用户提出新的排期需求，没有指定具体时间点，需要排期和拆分，属于new_task。",
+    "fallbackUsed": false,
+    "latencyMs": 1085
+  },
+  {
+    "id": "B05",
+    "category": "新任务拆分",
+    "input": "下周五前要交付设计稿，帮我排一下时间",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "new_task",
+        "taskText": "下周五前要交付设计稿，帮我排一下时间"
+      }
+    ],
+    "reason": "用户提出新的排期需求，需要安排设计稿交付的时间，属于新任务。",
+    "fallbackUsed": false,
+    "latencyMs": 790
+  },
+  {
+    "id": "B06",
+    "category": "新任务拆分",
+    "input": "我想在一个月内瘦5斤，帮我安排计划",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "new_task",
+        "taskText": "在一个月内瘦5斤，帮我安排计划"
+      }
+    ],
+    "reason": "用户提出新的减肥计划需求，没有明确时间点，需要排期和拆分，属于新任务。",
+    "fallbackUsed": false,
+    "latencyMs": 1101
+  },
+  {
+    "id": "C01",
+    "category": "恢复任务",
+    "input": "继续",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "resume_pending"
+      }
+    ],
+    "reason": "用户输入'继续'，且存在待恢复任务，应恢复上次被终止的任务。",
+    "fallbackUsed": false,
+    "latencyMs": 675
+  },
+  {
+    "id": "C02",
+    "category": "恢复任务",
+    "input": "接着上次来",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "resume_pending"
+      }
+    ],
+    "reason": "用户明确表达继续上次被终止的任务，且resumeQueue非空。",
+    "fallbackUsed": false,
+    "latencyMs": 1103
+  },
+  {
+    "id": "C03",
+    "category": "恢复任务",
+    "input": "那个没弄完的接着弄完",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "resume_pending"
+      }
+    ],
+    "reason": "用户明确表达继续之前未完成的任务，且resumeQueue中有待恢复任务。",
+    "fallbackUsed": false,
+    "latencyMs": 981
+  },
+  {
+    "id": "C04",
+    "category": "恢复任务",
+    "input": "帮我把它做完",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "resume_pending"
+      }
+    ],
+    "reason": "用户说'帮我把它做完'，且resumeQueue中有待恢复的任务，应恢复上次被终止的任务。",
+    "fallbackUsed": false,
+    "latencyMs": 1106
+  },
+  {
+    "id": "C05",
+    "category": "恢复任务",
+    "input": "继续刚才被打断的那个任务",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "resume_pending"
+      }
+    ],
+    "reason": "用户明确表达继续被打断的任务，且resumeQueue非空。",
+    "fallbackUsed": false,
+    "latencyMs": 634
+  },
+  {
+    "id": "D01",
+    "category": "恢复降级",
+    "input": "继续",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "chat",
+        "answer": "您没有可恢复的未完成任务。请问有什么新任务需要安排吗？"
+      }
+    ],
+    "reason": "用户说'继续'，但resumeQueue为空，没有可恢复的任务，因此转为chat询问。",
+    "fallbackUsed": false,
+    "latencyMs": 1087
+  },
+  {
+    "id": "D02",
+    "category": "恢复降级",
+    "input": "接着上次那个任务",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "chat",
+        "answer": "您目前没有可恢复的待办任务。请问有什么新任务需要我帮忙安排吗？"
+      }
+    ],
+    "reason": "用户要求继续上次任务，但resumeQueue为空，无法恢复，转为询问新需求。",
+    "fallbackUsed": false,
+    "latencyMs": 1254
+  },
+  {
+    "id": "E01",
+    "category": "日程查询",
+    "input": "我今天有什么安排",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_query",
+        "target": {
+          "date": "2026-09-08"
+        }
+      }
+    ],
+    "reason": "用户询问今天的安排，属于查询已有日程。",
+    "fallbackUsed": false,
+    "latencyMs": 1019
+  },
+  {
+    "id": "E02",
+    "category": "日程查询",
+    "input": "明天有哪些日程",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_query",
+        "target": {
+          "date": "2026-09-09"
+        }
+      }
+    ],
+    "reason": "用户查询明天的日程，属于对已有日程的查询操作。",
+    "fallbackUsed": false,
+    "latencyMs": 747
+  },
+  {
+    "id": "E03",
+    "category": "日程查询",
+    "input": "这周有什么会议",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_query",
+        "target": {
+          "title": "会议",
+          "rangeStart": "2026-09-07T00:00:00+08:00",
+          "rangeEnd": "2026-09-13T23:59:59+08:00"
+        }
+      }
+    ],
+    "reason": "用户查询本周的会议日程",
+    "fallbackUsed": false,
+    "latencyMs": 918
+  },
+  {
+    "id": "E04",
+    "category": "日程查询",
+    "input": "查一下洗澡是几点",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_query",
+        "target": {
+          "title": "洗澡"
+        }
+      }
+    ],
+    "reason": "用户查询已有日程'洗澡'的时间",
+    "fallbackUsed": false,
+    "latencyMs": 633
+  },
+  {
+    "id": "E05",
+    "category": "日程查询",
+    "input": "下周一我有什么安排",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_query",
+        "target": {
+          "date": "2026-09-14"
+        }
+      }
+    ],
+    "reason": "用户查询下周一（2026-09-14）的日程安排。",
+    "fallbackUsed": false,
+    "latencyMs": 961
+  },
+  {
+    "id": "F01",
+    "category": "日程修改",
+    "input": "洗澡推迟一个小时",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "洗澡"
+        },
+        "patch": {
+          "shiftMinutes": 60
+        }
+      }
+    ],
+    "reason": "用户要求将洗澡日程推迟一小时，属于对已有日程的修改。",
+    "fallbackUsed": false,
+    "latencyMs": 966
+  },
+  {
+    "id": "F02",
+    "category": "日程修改",
+    "input": "把开会提前30分钟",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "开会"
+        },
+        "patch": {
+          "shiftMinutes": -30
+        }
+      }
+    ],
+    "reason": "用户要求将已有日程'开会'提前30分钟，属于相对时间修改，使用shiftMinutes=-30。",
+    "fallbackUsed": false,
+    "latencyMs": 910
+  },
+  {
+    "id": "F03",
+    "category": "日程修改",
+    "input": "面试改到后天下午两点",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "面试"
+        },
+        "patch": {
+          "startTime": "2026-09-10T14:00:00+08:00",
+          "endTime": "2026-09-10T15:00:00+08:00"
+        }
+      }
+    ],
+    "reason": "用户要求将面试改期到后天下午两点，属于对已有日程的修改。",
+    "fallbackUsed": false,
+    "latencyMs": 1059
+  },
+  {
+    "id": "F04",
+    "category": "日程修改",
+    "input": "把跑步改成游泳",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "跑步"
+        },
+        "patch": {
+          "title": "游泳"
+        }
+      }
+    ],
+    "reason": "用户要求将日程'跑步'改为'游泳'，属于对已有日程的修改。",
+    "fallbackUsed": false,
+    "latencyMs": 660
+  },
+  {
+    "id": "F05",
+    "category": "日程修改",
+    "input": "把会议的优先级改成高",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "会议"
+        },
+        "patch": {
+          "priority": "高"
+        }
+      }
+    ],
+    "reason": "用户要求修改已有会议日程的优先级为高。",
+    "fallbackUsed": false,
+    "latencyMs": 821
+  },
+  {
+    "id": "F06",
+    "category": "日程修改",
+    "input": "洗澡冲突也照常推迟一小时",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "洗澡"
+        },
+        "patch": {
+          "shiftMinutes": 60
+        },
+        "allowConflict": true
+      }
+    ],
+    "reason": "用户要求推迟洗澡一小时，且明确表示冲突也照常，因此输出event_update并设置allowConflict为true。",
+    "fallbackUsed": false,
+    "latencyMs": 1224
+  },
+  {
+    "id": "F07",
+    "category": "日程修改",
+    "input": "把明天的汇报改到下午3点",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "汇报"
+        },
+        "patch": {
+          "startTime": "2026-09-09T15:00:00+08:00",
+          "endTime": "2026-09-09T16:00:00+08:00"
+        }
+      }
+    ],
+    "reason": "用户要求修改已有日程'汇报'的时间到明天下午3点，属于事件更新。",
+    "fallbackUsed": false,
+    "latencyMs": 1069
+  },
+  {
+    "id": "F08",
+    "category": "日程修改",
+    "input": "健身推迟45分钟",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "健身"
+        },
+        "patch": {
+          "shiftMinutes": 45
+        }
+      }
+    ],
+    "reason": "用户要求将健身日程推迟45分钟，属于对已有日程的修改。",
+    "fallbackUsed": false,
+    "latencyMs": 1052
+  },
+  {
+    "id": "G01",
+    "category": "日程删除",
+    "input": "删掉洗澡",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_delete",
+        "target": {
+          "title": "洗澡"
+        }
+      }
+    ],
+    "reason": "用户明确要求删除日程'洗澡'，属于对已有日程的删除操作。",
+    "fallbackUsed": false,
+    "latencyMs": 1132
+  },
+  {
+    "id": "G02",
+    "category": "日程删除",
+    "input": "取消明天的会议",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_delete",
+        "target": {
+          "title": "会议",
+          "date": "2026-09-09"
+        }
+      }
+    ],
+    "reason": "用户明确要求取消明天的会议，属于对已有日程的删除操作。",
+    "fallbackUsed": false,
+    "latencyMs": 902
+  },
+  {
+    "id": "G03",
+    "category": "日程删除",
+    "input": "把跑步删了",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_delete",
+        "target": {
+          "title": "跑步"
+        }
+      }
+    ],
+    "reason": "用户明确要求删除名为跑步的日程",
+    "fallbackUsed": false,
+    "latencyMs": 1004
+  },
+  {
+    "id": "G04",
+    "category": "日程删除",
+    "input": "删除后天的面试",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_delete",
+        "target": {
+          "title": "面试",
+          "date": "2026-09-10"
+        }
+      }
+    ],
+    "reason": "用户明确要求删除后天的面试，属于对已有日程的删除操作。",
+    "fallbackUsed": false,
+    "latencyMs": 1134
+  },
+  {
+    "id": "G05",
+    "category": "日程删除",
+    "input": "洗澡这个提醒不要了",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_delete",
+        "target": {
+          "title": "洗澡"
+        }
+      }
+    ],
+    "reason": "用户明确要求删除洗澡提醒",
+    "fallbackUsed": false,
+    "latencyMs": 592
+  },
+  {
+    "id": "H01",
+    "category": "闲聊",
+    "input": "你好",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "chat",
+        "answer": "你好！我是你的日程助手，可以帮你安排日程、创建提醒、管理已有日程，或者回答相关问题。有什么可以帮你的吗？"
+      }
+    ],
+    "reason": "用户打招呼，属于闲聊，无任务需求。",
+    "fallbackUsed": false,
+    "latencyMs": 1189
+  },
+  {
+    "id": "H02",
+    "category": "闲聊",
+    "input": "你能做什么",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "chat",
+        "answer": "我可以帮你管理日程和提醒，比如创建新任务、安排会议、设置提醒、查询或修改已有日程。你也可以问我关于日程安排的问题，或者让我帮你规划时间。有什么具体需要帮忙的吗？"
+      }
+    ],
+    "reason": "用户询问能力，属于闲聊，用chat回答。",
+    "fallbackUsed": false,
+    "latencyMs": 1391
+  },
+  {
+    "id": "H03",
+    "category": "闲聊",
+    "input": "讲个笑话吧",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "chat",
+        "answer": "好的，讲个笑话：为什么程序员分不清万圣节和圣诞节？因为 Oct 31 == Dec 25！"
+      }
+    ],
+    "reason": "用户要求讲笑话，属于闲聊，无任务需求。",
+    "fallbackUsed": false,
+    "latencyMs": 1073
+  },
+  {
+    "id": "H04",
+    "category": "闲聊",
+    "input": "你是谁",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "chat",
+        "answer": "我是你的日程助手，可以帮你安排日程、创建提醒、管理已有日程，或者回答你的问题。有什么需要帮忙的吗？"
+      }
+    ],
+    "reason": "用户询问身份，属于闲聊，用chat回答。",
+    "fallbackUsed": false,
+    "latencyMs": 1184
+  },
+  {
+    "id": "H05",
+    "category": "闲聊",
+    "input": "今天心情不太好",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "chat",
+        "answer": "听起来你今天心情不太好，想聊聊吗？或者我可以帮你安排一些放松的事情，比如散步、听音乐或者看个电影。有什么我能帮你的吗？"
+      }
+    ],
+    "reason": "用户表达情绪，属于闲聊，无任务需求。",
+    "fallbackUsed": false,
+    "latencyMs": 1426
+  },
+  {
+    "id": "I01",
+    "category": "多需求混合",
+    "input": "继续上次的任务，另外十分钟后提醒我洗澡",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "resume_pending"
+      },
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我洗澡",
+          "startTime": "2026-09-08T20:41:23+08:00",
+          "endTime": "2026-09-08T20:56:23+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户明确要求继续上次任务，同时提出十分钟后提醒洗澡的原子提醒。",
+    "fallbackUsed": false,
+    "latencyMs": 1308
+  },
+  {
+    "id": "I02",
+    "category": "多需求混合",
+    "input": "删掉洗澡，然后半小时后提醒我吃药",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_delete",
+        "target": {
+          "title": "洗澡"
+        }
+      },
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我吃药",
+          "startTime": "2026-09-08T21:01:23+08:00",
+          "endTime": "2026-09-08T21:16:23+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求删除洗澡日程，并创建一个半小时后的提醒吃药事件。",
+    "fallbackUsed": false,
+    "latencyMs": 1601
+  },
+  {
+    "id": "I03",
+    "category": "多需求混合",
+    "input": "我今天有什么安排？顺便晚上8点提醒我吃药",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_query",
+        "target": {
+          "date": "2026-09-08"
+        }
+      },
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "吃药",
+          "startTime": "2026-09-08T20:00:00+08:00",
+          "endTime": "2026-09-08T20:15:00+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户查询今天的安排，并创建晚上8点的吃药提醒。",
+    "fallbackUsed": false,
+    "latencyMs": 1413
+  },
+  {
+    "id": "I04",
+    "category": "多需求混合",
+    "input": "帮我准备季度总结，另外明天早上9点提醒我打卡",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "new_task",
+        "taskText": "准备季度总结"
+      },
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我打卡",
+          "startTime": "2026-09-09T09:00:00+08:00",
+          "endTime": "2026-09-09T09:15:00+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户提出两个需求：准备季度总结（新任务）和明天早上9点提醒打卡（明确时间点的提醒，创建日程）",
+    "fallbackUsed": false,
+    "latencyMs": 1418
+  },
+  {
+    "id": "I05",
+    "category": "多需求混合",
+    "input": "半小时后提醒我开会，冲突也照常安排",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "开会",
+          "startTime": "2026-09-08T21:01:24+08:00",
+          "endTime": "2026-09-08T21:16:24+08:00",
+          "category": "工作",
+          "priority": "中",
+          "status": "未开始"
+        },
+        "allowConflict": true
+      }
+    ],
+    "reason": "用户要求半小时后提醒开会，是相对时间提醒，属于event_create；且明确说冲突也照常安排，allowConflict为true。",
+    "fallbackUsed": false,
+    "latencyMs": 1206
+  },
+  {
+    "id": "I06",
+    "category": "多需求混合",
+    "input": "把洗澡推迟一小时，再删掉跑步",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "洗澡"
+        },
+        "patch": {
+          "shiftMinutes": 60
+        }
+      },
+      {
+        "kind": "event_delete",
+        "target": {
+          "title": "跑步"
+        }
+      }
+    ],
+    "reason": "用户要求推迟洗澡一小时并删除跑步日程，两个操作独立执行。",
+    "fallbackUsed": false,
+    "latencyMs": 1171
+  }
+]

@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
+import { Button, List, Modal } from 'antd';
 
 import { AgentChatPanel } from '../features/agent/AgentChatPanel';
 import { AgentContextPanel } from '../features/agent/AgentContextPanel';
 import { EventModal } from '../features/calendar/EventModal';
-import { restoreAgentRunFromJob, useAgentRun } from '../hooks/useAgentRun';
+import { restoreActiveAgentJob, readActiveJobInput, useAgentRun } from '../hooks/useAgentRun';
 import { useCalendarEvents } from '../hooks/useCalendarEvents';
 import { AppLayout } from '../layouts/AppLayout';
 import { agentApi } from '../services/agentApi';
@@ -17,48 +18,73 @@ interface AgentWorkspacePageProps {
 
 export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePageProps) {
   const { events, fetchEvents, createEvent, updateEvent, deleteEvent } = useCalendarEvents();
-  const { generatePlan, confirmPlan, annotateSelectedText, submitScheduleDecision, resetRun } = useAgentRun(fetchEvents);
+  const {
+    generatePlan,
+    forceComplexPlan,
+    stopAgentRun,
+    confirmPlan,
+    annotateSelectedText,
+    submitScheduleDecision,
+    resumeActiveJobStream,
+    refreshLatestUndoable,
+    undoAgentRun,
+    resetRun,
+    pendingEventSelection,
+    resolvePendingEventSelection,
+    dismissPendingEventSelection,
+    pendingEventConflict,
+    resolvePendingEventConflict
+  } = useAgentRun(fetchEvents);
 
   useEffect(() => {
     let cancelled = false;
 
-    void Promise.all([agentApi.listConversationMessages(), agentApi.listJobs()])
-      .then(async ([messages, jobs]) => {
+    void (async () => {
+      try {
+        const [messages, activeJobs] = await Promise.all([agentApi.listConversationMessages(), agentApi.getActiveJobs()]);
         if (cancelled) return;
         if (useAgentStore.getState().conversationMessages.length === 0) {
           useAgentStore.getState().hydrateConversationMessages(messages);
         }
 
-        for (const job of jobs) {
-          if (!['running', 'waiting_user'].includes(job.status)) continue;
+        // 恢复优先级：waiting_user（决策卡）> running（续看）> paused_manual（仅提示，输入"继续"恢复）
+        const waiting = activeJobs.find((item) => item.job.status === 'waiting_user' && item.checkpoint?.status === 'pending');
+        const running = activeJobs.find((item) => ['queued', 'running'].includes(item.job.status));
+        const paused = activeJobs.find((item) => item.job.status === 'paused_manual');
 
-          const detail = await agentApi.getJob(job.id);
-          if (cancelled) return;
-
-          const checkpoint = detail.checkpoint;
-          const checkpointExpired = checkpoint?.expiresAt ? new Date(checkpoint.expiresAt).getTime() < Date.now() : false;
-
-          if (checkpointExpired && detail.status === 'waiting_user') {
-            await agentApi.cancelJob(detail.id);
-            continue;
-          }
-
-          if (detail.status === 'waiting_user' && checkpoint?.status !== 'pending') {
-            continue;
-          }
-
-          if (restoreAgentRunFromJob(detail)) {
-            return;
-          }
+        if (waiting) {
+          useAgentStore.getState().setResumableJob(waiting);
+          restoreActiveAgentJob(waiting);
+          return;
         }
-      })
-      .catch((error) => {
+
+        if (running) {
+          useAgentStore.getState().setResumableJob(null);
+          restoreActiveAgentJob(running);
+          // 重新订阅 SSE 续看（同时取消 BFF 侧 30 秒宽限期内的待执行删除）
+          const prompt = readActiveJobInput(running);
+          void resumeActiveJobStream(running.job.id, prompt);
+          return;
+        }
+
+        if (paused) {
+          // 只登记为可恢复任务，不自动恢复现场；用户输入"继续"时才恢复
+          useAgentStore.getState().setResumableJob(paused);
+        }
+      } catch (error) {
         console.error('[Agent Workspace] initial hydrate failed:', error);
-      });
+      } finally {
+        if (!cancelled) {
+          // 撤回按钮数据：最新可撤回轮次
+          void refreshLatestUndoable();
+        }
+      }
+    })();
 
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -88,10 +114,15 @@ export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePag
               <AgentChatPanel
                 variant="primary"
                 onGenerate={generatePlan}
+                onForceComplexPlan={forceComplexPlan}
+                onStop={stopAgentRun}
                 onConfirm={confirmPlan}
                 onAnnotateText={annotateSelectedText}
                 onReject={resetRun}
                 onScheduleDecision={submitScheduleDecision}
+                onUndoRun={undoAgentRun}
+                pendingEventConflict={pendingEventConflict}
+                onResolveEventConflict={resolvePendingEventConflict}
               />
             </div>
           </div>
@@ -107,6 +138,39 @@ export function AgentWorkspacePage({ activePage, onNavigate }: AgentWorkspacePag
         </section>
       </main>
       <EventModal events={events} onCreate={createEvent} onUpdate={updateEvent} onDelete={deleteEvent} />
+
+      <Modal
+        open={pendingEventSelection !== null}
+        title={pendingEventSelection?.message ?? '请选择日程'}
+        onCancel={dismissPendingEventSelection}
+        footer={[
+          <Button key="cancel" onClick={dismissPendingEventSelection}>
+            取消
+          </Button>
+        ]}
+        destroyOnClose
+      >
+        <List
+          dataSource={pendingEventSelection?.options ?? []}
+          rowKey={(option) => option.eventId}
+          renderItem={(option) => (
+            <List.Item
+              actions={[
+                <Button
+                  key="pick"
+                  type="primary"
+                  size="small"
+                  onClick={() => void resolvePendingEventSelection(option.eventId)}
+                >
+                  选这条
+                </Button>
+              ]}
+            >
+              <List.Item.Meta title={`「${option.title}」`} description={option.timeText} />
+            </List.Item>
+          )}
+        />
+      </Modal>
     </AppLayout>
   );
 }

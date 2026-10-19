@@ -141,5 +141,10 @@ export const eventApi = {
     return request(`/events/agent-runs/${encodeURIComponent(runId)}/undo`, {
       method: 'POST'
     });
+  },
+
+  /** 最新可撤回轮次（只撤最新一轮的判断依据；撤回后自动指向前一轮，支持连锁） */
+  async getLatestAgentRun(): Promise<{ runId: string; eventCount: number; createdAt: string } | null> {
+    return request('/events/agent-runs/latest');
   }
 };

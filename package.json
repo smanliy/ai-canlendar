@@ -1,0 +1,25 @@
+{
+  "name": "calendar-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@11.19.0",
+  "workspaces": [
+    "front-react",
+    "node_calendar-bff"
+  ],
+  "scripts": {
+    "dev": "concurrently -n bff,front,agent -c blue,green,magenta \"npm run dev:bff\" \"npm run dev:front\" \"npm run dev:agent\"",
+    "dev:front": "npm --workspace front-react run dev",
+    "dev:bff": "npm --workspace node_calendar-bff run dev",
+    "dev:agent": "cd agent/app && python main.py",
+    "build": "npm --workspace front-react run build && npm --workspace node_calendar-bff run typecheck",
+    "typecheck": "npm --workspace front-react run typecheck && npm --workspace node_calendar-bff run typecheck",
+    "generate": "npm --workspace node_calendar-bff run generate",
+    "migrate": "npm --workspace node_calendar-bff run migrate",
+    "studio": "npm --workspace node_calendar-bff run studio",
+    "test": "npm --workspace node_calendar-bff run test:unit"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

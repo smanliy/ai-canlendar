@@ -27,7 +27,10 @@ UNCLEAR_VALUES = {
     "尽快",
 }
 
-ISO_DEADLINE_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+# 全串匹配：LLM 偶尔会在 ISO 后面拼接垃圾（"2026-09-08T18:14:00+08:00 （三十分钟后）"）。
+# 前缀匹配会让这类串漏过校验，直到 Node 侧 Date.parse 才 400 崩溃；
+# 收紧为完整 ISO 后，这类输出在 Python 校验阶段就被判为"deadline 缺失"走 needsUserInput。
+ISO_DEADLINE_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$"
 
 
 def _read_string(value: Any) -> str:
@@ -55,11 +58,24 @@ def _deadline_iso_is_valid(value: str) -> bool:
     return bool(re.search(ISO_DEADLINE_PATTERN, value))
 
 
+def _extract_deadline_iso(value: str) -> str:
+    """从 LLM 输出里提取干净的 ISO 截止时间。
+
+    LLM 偶尔在 ISO 后拼接说明文字（"2026-09-08T18:14:00+08:00 （三十分钟后）"），
+    语义上合法——提取干净的 ISO 段即可，不该让用户为重说一遍买单。
+    """
+    if not value or _is_unclear(value):
+        return ""
+    match = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?", value)
+    return match.group(0) if match else ""
+
+
 def _read_deadline_iso(llm_extraction: dict[str, Any]) -> str:
     for field in ("deadline", "deadlineIso"):
         value = _read_string(llm_extraction.get(field))
-        if _deadline_iso_is_valid(value):
-            return value
+        cleaned = _extract_deadline_iso(value)
+        if cleaned:
+            return cleaned
     return ""
 
 

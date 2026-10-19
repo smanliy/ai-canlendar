@@ -5,7 +5,6 @@ import express, { type NextFunction, type Request, type Response } from 'express
 
 import { authRoutes } from './modules/auth/auth.route';
 import { agentRoutes } from './modules/agent/agent.route';
-import { openclawBridgeRoutes } from './modules/integrations/openclaw.route';
 import { eventRoutes } from './modules/events/events.routes';
 import { CSRF_COOKIE_NAME, REFRESH_TOKEN_COOKIE_NAME } from './modules/auth/auth.service';
 import { startAgentJobWorker } from './modules/agent/agent-job.worker';
@@ -22,8 +21,10 @@ const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173')
 function csrfGuard(req: Request, res: Response, next: NextFunction): void {
   const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
   const publicAuthPaths = new Set(['/api/auth/send-code', '/api/auth/login', '/api/auth/register']);
+  // sendBeacon 无法携带自定义头（无 X-CSRF-Token），该端点自带 body 内 JWT 校验
+  const beaconPaths = new Set(['/api/agent/jobs/abort']);
 
-  if (safeMethods.has(req.method) || publicAuthPaths.has(req.path)) {
+  if (safeMethods.has(req.method) || publicAuthPaths.has(req.path) || beaconPaths.has(req.path)) {
     next();
     return;
   }
@@ -66,7 +67,6 @@ app.get('/', (_req: Request, res: Response) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/agent', agentRoutes);
-app.use('/api/integrations/openclaw', openclawBridgeRoutes);
 app.use('/api/events', eventRoutes);
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {

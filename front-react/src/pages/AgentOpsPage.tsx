@@ -29,7 +29,8 @@ const STATUS_LABEL: Record<AgentJobStatus, string> = {
   waiting_user: '待确认',
   succeeded: '已完成',
   failed: '失败',
-  canceled: '已取消'
+  canceled: '已取消',
+  abandoned: '已放弃'
 };
 
 const STATUS_COLOR: Record<AgentJobStatus, string> = {
@@ -38,7 +39,8 @@ const STATUS_COLOR: Record<AgentJobStatus, string> = {
   waiting_user: 'orange',
   succeeded: 'green',
   failed: 'red',
-  canceled: 'default'
+  canceled: 'default',
+  abandoned: 'default'
 };
 
 function formatDateTime(value: string | null | undefined) {
@@ -76,7 +78,8 @@ function checkpointTypeLabel(checkpoint: AgentCheckpoint | null) {
     schedule_decision: '排期决策',
     conflict_decision: '冲突决策',
     final_confirm: '最终确认',
-    annotation_review: '批注复核'
+    annotation_review: '批注复核',
+    manual_pause: '手动终止'
   };
   return labels[checkpoint.type];
 }
@@ -218,7 +221,7 @@ export function AgentOpsPage({ activePage, onNavigate }: AgentOpsPageProps) {
       return;
     }
 
-    if (['succeeded', 'failed', 'canceled'].includes(selectedJob.status)) {
+    if (['succeeded', 'failed', 'canceled', 'abandoned'].includes(selectedJob.status)) {
       streamingJobRef.current = null;
       return;
     }
@@ -459,7 +462,8 @@ export function AgentOpsPage({ activePage, onNavigate }: AgentOpsPageProps) {
                     { label: '待确认', value: 'waiting_user' },
                     { label: '已完成', value: 'succeeded' },
                     { label: '失败', value: 'failed' },
-                    { label: '已取消', value: 'canceled' }
+                    { label: '已取消', value: 'canceled' },
+                    { label: '已放弃', value: 'abandoned' }
                   ]}
                   onChange={(value) => setFilterStatus(value)}
                 />

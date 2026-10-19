@@ -2,10 +2,18 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { createInitialSteps } from '../services/agentApi';
+import type { ActiveAgentJob } from '../services/agentApi';
 import type { AgentClarification, AgentConflict, AgentConversationMessage, AgentRunStatus, AgentRunStep, SchedulePlan, SchedulePlanOption } from '../types/agent';
+
+interface LatestUndoableRun {
+  runId: string;
+  eventCount: number;
+  createdAt?: string;
+}
 
 interface AgentState {
   currentRunId: string | null;
+  currentJobId: string | null;
   userInput: string;
   submittedInput: string;
   runStatus: AgentRunStatus;
@@ -19,12 +27,19 @@ interface AgentState {
   directAnswer: string | null;
   conversationMessages: AgentConversationMessage[];
   confirmLoading: boolean;
+  /** 页面重开时发现的可恢复任务（waiting_user / paused_manual），输入"继续"可恢复 */
+  resumableJob: ActiveAgentJob | null;
+  /** 最新可撤回轮次（只撤最新一轮；撤回后自动指向更早一轮） */
+  latestUndoableRun: LatestUndoableRun | null;
+  /** 已撤回的 runId，气泡上不再显示撤回按钮 */
+  revokedRunIds: string[];
   setUserInput: (value: string) => void;
   setSubmittedInput: (value: string) => void;
   setSteps: (steps: AgentRunStep[]) => void;
   resetRun: () => void;
   startRun: (runId: string, submittedInput: string) => void;
   setCurrentRunId: (runId: string) => void;
+  setCurrentJobId: (jobId: string | null) => void;
   updateStep: (stepId: string, status: AgentRunStep['status'], output?: unknown) => void;
   setPlan: (plan: SchedulePlan, conflicts: AgentConflict[]) => void;
   setPlanOptions: (plans: SchedulePlanOption[], conflicts: AgentConflict[]) => void;
@@ -38,11 +53,15 @@ interface AgentState {
   selectPlan: (planId: string | null) => void;
   setRunStatus: (status: AgentRunStatus) => void;
   setConfirmLoading: (loading: boolean) => void;
+  setResumableJob: (job: ActiveAgentJob | null) => void;
+  setLatestUndoableRun: (run: LatestUndoableRun | null) => void;
+  markRunRevoked: (runId: string) => void;
 }
 
 export const useAgentStore = create<AgentState>()(
   immer((set) => ({
     currentRunId: null,
+    currentJobId: null,
     userInput: '',
     submittedInput: '',
     runStatus: 'idle',
@@ -56,6 +75,9 @@ export const useAgentStore = create<AgentState>()(
     directAnswer: null,
     conversationMessages: [],
     confirmLoading: false,
+    resumableJob: null,
+    latestUndoableRun: null,
+    revokedRunIds: [],
     setUserInput: (value) =>
       set((state) => {
         state.userInput = value;
@@ -71,6 +93,7 @@ export const useAgentStore = create<AgentState>()(
     resetRun: () =>
       set((state) => {
         state.currentRunId = null;
+        state.currentJobId = null;
         state.runStatus = 'idle';
         state.userInput = '';
         state.submittedInput = '';
@@ -87,6 +110,7 @@ export const useAgentStore = create<AgentState>()(
     startRun: (runId, submittedInput) =>
       set((state) => {
         state.currentRunId = runId;
+        state.currentJobId = null;
         state.userInput = '';
         state.submittedInput = submittedInput;
         state.runStatus = 'running';
@@ -102,6 +126,10 @@ export const useAgentStore = create<AgentState>()(
     setCurrentRunId: (runId) =>
       set((state) => {
         state.currentRunId = runId;
+      }),
+    setCurrentJobId: (jobId) =>
+      set((state) => {
+        state.currentJobId = jobId;
       }),
     updateStep: (stepId, status, output) =>
       set((state) => {
@@ -162,6 +190,7 @@ export const useAgentStore = create<AgentState>()(
     clearConversation: () =>
       set((state) => {
         state.currentRunId = null;
+        state.currentJobId = null;
         state.userInput = '';
         state.submittedInput = '';
         state.runStatus = 'idle';
@@ -202,6 +231,23 @@ export const useAgentStore = create<AgentState>()(
     setConfirmLoading: (loading) =>
       set((state) => {
         state.confirmLoading = loading;
+      }),
+    setResumableJob: (job) =>
+      set((state) => {
+        state.resumableJob = job;
+      }),
+    setLatestUndoableRun: (run) =>
+      set((state) => {
+        state.latestUndoableRun = run;
+      }),
+    markRunRevoked: (runId) =>
+      set((state) => {
+        if (!state.revokedRunIds.includes(runId)) {
+          state.revokedRunIds.push(runId);
+        }
+        if (state.latestUndoableRun?.runId === runId) {
+          state.latestUndoableRun = null;
+        }
       })
   }))
 );

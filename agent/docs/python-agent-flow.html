@@ -31,61 +31,87 @@
   <div class="wrap">
     <pre class="mermaid">
 flowchart TD
-    start([HTTP request]) --> server["app/main.py<br/>run_server()"]
-    server --> handler["agent/server.py<br/>AgentHandler.do_GET / do_POST"]
-    handler --> routes{"agent/routes.py<br/>handle_get / handle_post"}
+    user([用户输入排期目标]) --> ui["front-react<br/>useAgentRun.generatePlan()"]
+    ui --> createJob["agentApi.createJob()<br/>POST /api/agent/jobs"]
+    createJob --> job[("AgentJob<br/>queued / running / waiting_user / succeeded")]
+    job --> stream["agentApi.streamJobEvents()<br/>SSE 回放步骤状态"]
+    job --> worker["BFF 后台 worker<br/>执行 schedule_plan job"]
+    worker --> mainFlow["runAgentMainFlow()<br/>编排一次 Agent 主流程"]
 
-    routes -->|GET /health| health["return status, pid, file"]
+    subgraph python["Python Agent 服务 agent/app"]
+        pyServer["main.py / server.py<br/>ThreadingHTTPServer"]
+        routes{"routes.py<br/>handle_get / handle_post"}
 
-    routes -->|POST /agent/validate| validate["validators.validate_fields()"]
-    validate --> validateInput["merge rawInput + llmExtraction + clarificationJson"]
-    validateInput --> validateDecision{"duration + deadline ISO complete?"}
-    validateDecision -->|no| needsInput["status=needsUserInput<br/>clarificationJson"]
-    validateDecision -->|yes| validateReady["status=ready<br/>normalizedContext"]
+        pyServer --> routes
+        routes -->|GET /health| health["健康检查<br/>status + pid + file"]
 
-    routes -->|POST /agent/plan| plan["planner.plan_atomic_tasks()"]
-    plan --> research["tools.research_task_duration()"]
-    research --> searchProviders["web search providers<br/>CSTCloud / Tavily / DuckDuckGo"]
-    searchProviders --> evidenceDecision{"external evidence found?"}
-    evidenceDecision -->|no| planFailed["return structured failed payload"]
-    evidenceDecision -->|yes| deepseekPlan["_call_deepseek_for_atomic_tasks()"]
-    deepseekPlan --> normalizeTasks["_normalize_atomic_tasks()"]
-    normalizeTasks --> enrichEvidence["enrich_atomic_task_evidence()"]
-    enrichEvidence --> calendarQuery["query_existing_calendar_events()<br/>tools.calendar_events_query()"]
-    calendarQuery --> freeWindows["calculate_available_free_windows()<br/>tools.calculate_free_windows()"]
-    freeWindows --> schedule["tools.schedule_tasks()"]
-    schedule --> attachNote["_attach_excluded_availability_note()"]
-    attachNote --> conflictCheck["_check_conflicts_after_schedule()<br/>tools.check_schedule_conflicts()"]
-    conflictCheck --> feasibility["validate_atomic_plan()"]
-    feasibility --> planResponse["return atomicTasks + feasibility<br/>toolResults + schedule/conflict results"]
+        routes -->|POST /agent/validate| validate["validators.validate_fields()"]
+        validate --> mergeInput["合并 rawInput / llmExtraction / clarificationJson"]
+        mergeInput --> fieldReady{"duration + deadline<br/>是否完整且可解析?"}
+        fieldReady -->|否| needInput["needsUserInput<br/>返回 clarificationJson"]
+        fieldReady -->|是| normalized["ready<br/>normalizedContext"]
 
-    routes -->|POST /agent/resume| resume["planner.resume_schedule_decision()"]
-    resume --> resumeDecision{"decision.optionId"}
-    resumeDecision -->|allow_beyond_golden_time| allowSchedule["schedule_tasks(decisions=allow beyond golden time)"]
-    allowSchedule --> allowConflict["check conflicts"]
-    allowConflict --> resumeReady["return status=ready"]
-    resumeDecision -->|split_task| findParent["_find_task_by_id_or_title()"]
-    findParent --> splitMode{"can auto split?"}
-    splitMode -->|LLM split| llmSplit["_split_single_task_with_llm()"]
-    splitMode -->|fallback/mechanical| mechanicalSplit["_split_single_task_mechanically()<br/>or _fallback_split_parent_task()"]
-    llmSplit --> replaceTask["_replace_one_task_only()"]
-    mechanicalSplit --> replaceTask
-    replaceTask --> reschedule["schedule_tasks()"]
-    reschedule --> resumeConflict["check conflicts"]
-    resumeConflict --> splitResponse["return updated atomicTasks<br/>schedule/conflict results"]
-    resumeDecision -->|other| unsupported["return status=unsupported"]
+        routes -->|POST /agent/plan| plan["planner.plan_atomic_tasks()"]
+        plan --> shape["DeepSeek 任务形态判定<br/>atomic 或 needs_decomposition"]
+        shape -->|atomic| singleTask["本地生成单个 atomicTask"]
+        shape -->|needs_decomposition| research["research_task_duration()<br/>构造查询并搜索耗时参考"]
+        research --> providers["CSTCloud / Tavily / DuckDuckGo"]
+        providers --> evidence{"找到外部证据?"}
+        evidence -->|是| split["DeepSeek 拆解 2-6 个原子任务"]
+        evidence -->|否| fallbackSingle["无证据兜底<br/>生成单个 atomicTask"]
+        singleTask --> normalize["规范化任务<br/>分钟数 / 依赖 / evidence"]
+        split --> normalize
+        fallbackSingle --> normalize
+        normalize --> calendarQuery["calendar_events_query()<br/>向 Node BFF 查询已有日程"]
+        calendarQuery --> freeWindows["calculate_free_windows()<br/>按偏好和已有日程算空闲窗口"]
+        freeWindows --> schedule["schedule_tasks()<br/>优先黄金时间生成草稿排期"]
+        schedule --> scheduleDecision{"排期是否需要用户决策?"}
+        scheduleDecision -->|需要| scheduleInterrupt["interrupt<br/>拆分任务 / 允许非黄金时间等选项"]
+        scheduleDecision -->|不需要| conflicts["check_schedule_conflicts()<br/>检测已有日程和草稿重叠"]
+        scheduleInterrupt --> planResult["返回 waitingConfirm / 决策面板数据"]
+        conflicts --> feasibility["validate_atomic_plan()<br/>校验总工作量是否超载"]
+        feasibility --> planResult
 
-    routes -->|POST /agent/tool-agent| toolAgent["tool_agent.run_tool_agent()"]
-    toolAgent --> selectTools["DeepSeek selects toolCalls"]
-    selectTools --> dispatch["tools.dispatch_tool_call()"]
-    dispatch --> finalAnswer["DeepSeek final answer from toolResults"]
-    finalAnswer --> toolResponse["return answer + toolCalls + toolResults"]
+        routes -->|POST /agent/resume| resume["planner.resume_schedule_decision()"]
+        resume --> resumeChoice{"decision.optionId"}
+        resumeChoice -->|allow_beyond_golden_time| allow["带用户授权重新 schedule_tasks()"]
+        allow --> resumeConflicts["再次 check_schedule_conflicts()"]
+        resumeChoice -->|split_task| locate["定位 parent task"]
+        locate --> splitLoop["最多 8 轮自动拆分循环"]
+        splitLoop --> splitMode{"语义拆分还是机械切片?"}
+        splitMode -->|LLM semantic split| llmSplit["_split_single_task_with_llm()"]
+        splitMode -->|mechanical split| mechanical["_split_single_task_mechanically()"]
+        llmSplit --> replace["只替换当前父任务"]
+        mechanical --> replace
+        replace --> reschedule["重新 schedule_tasks()"]
+        reschedule --> splitLoop
+        splitLoop --> resumeConflicts
+        resumeChoice -->|其他| unsupported["status=unsupported"]
+        resumeConflicts --> resumeResult["返回更新后的 atomicTasks / plan / conflicts"]
 
-    routes -->|POST /agent/tasks| tasks["executor.accept_task()"]
-    tasks --> finalValidate["validate_final_task()"]
-    finalValidate --> taskResponse["return received payload + finalValidation"]
+        routes -->|POST /agent/tool-agent| toolAgent["tool_agent.run_tool_agent()"]
+        toolAgent --> selectTools["DeepSeek 选择 toolCalls"]
+        selectTools --> dispatch["tools.dispatch_tool_call()<br/>web_search / page_fetch / calculate / calendar tools"]
+        dispatch --> finalAnswer["DeepSeek 汇总最终回答"]
 
-    routes -->|unknown path| notFound["404 Not found"]
+        routes -->|POST /agent/tasks| accept["executor.accept_task()"]
+        accept --> finalValidate["validate_final_task()"]
+    end
+
+    mainFlow --> pyServer
+    needInput --> checkpoint["BFF 创建 checkpoint<br/>job.status = waiting_user"]
+    planResult --> checkpoint
+    resumeResult --> options["前端展示方案卡 / 冲突 / 决策按钮"]
+    finalAnswer --> stream
+    finalValidate --> stream
+    planResult --> stream
+    checkpoint --> stream
+    stream --> uiState["Zustand 更新步骤 / trace / 方案状态"]
+    uiState --> choose{"用户是否确认方案?"}
+    choose -->|继续决策| decisionApi["POST /api/agent/runs/:runId/decision"]
+    decisionApi --> worker
+    choose -->|确认写入| bulkCreate["eventApi.bulkCreateEvents()<br/>写入 CalendarEvent"]
+    bulkCreate --> done([日程落库完成])
 
     </pre>
   </div>

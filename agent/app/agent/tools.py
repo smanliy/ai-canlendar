@@ -98,7 +98,17 @@ def _format_network_error(prefix: str, error: Exception) -> str:
     if isinstance(error, TimeoutError | SocketTimeout):
         return f"{prefix}: <urlopen error timed out>"
     if isinstance(error, HTTPError):
-        return f"{prefix}: HTTP {error.code}"
+        # BFF 的错误响应体里有具体原因（如 "endIso must be a valid ISO datetime string"），
+        # 只报状态码会让排障变成猜谜——把 body 里的 message 一并带出来。
+        detail = ""
+        try:
+            body = error.read().decode("utf-8")
+            payload = json.loads(body) if body else {}
+            if isinstance(payload, dict) and isinstance(payload.get("message"), str):
+                detail = payload["message"]
+        except Exception:
+            detail = ""
+        return f"{prefix}: HTTP {error.code} {detail}".strip()
     if isinstance(error, URLError):
         return f"{prefix}: {error}"
     return f"{prefix}: {error}"
@@ -1303,6 +1313,7 @@ def check_schedule_conflicts(
                     "severity": "info" if approved else "blocking",
                     "approvedByUser": approved,
                     "taskTitle": str(allocation.get("title") or ""),
+                    "eventId": str(event.get("id") or ""),
                     "eventTitle": str(event.get("title") or "已有日程"),
                     "taskStartIso": allocation_interval[0].isoformat(),
                     "taskEndIso": allocation_interval[1].isoformat(),

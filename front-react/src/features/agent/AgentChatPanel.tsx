@@ -1,8 +1,10 @@
-import { CheckCircleFilled, CloseCircleFilled, GlobalOutlined, LoadingOutlined, SendOutlined } from '@ant-design/icons';
-import { Alert, Button, Input } from 'antd';
+import { CheckCircleFilled, CloseCircleFilled, GlobalOutlined, LoadingOutlined, SendOutlined, StopOutlined, UndoOutlined } from '@ant-design/icons';
+import { Alert, Button, Input, InputNumber } from 'antd';
+import { useEffect, useState } from 'react';
 
 import { useAgentStore } from '../../stores/agentStore';
 import type { AgentRunStep, LocalCalendarEvent, TokenUsage } from '../../types/agent';
+import type { PendingEventConflictView } from '../../services/agentApi';
 // Runtime graph display is intentionally disabled while LangSmith tracing is evaluated.
 // import type { AgentRunStep, AgentTrace } from '../../types/agent';
 // import { AgentTraceGraph } from './AgentTraceGraph';
@@ -10,10 +12,16 @@ import { PlanOptionDeck, type PlanTextAnnotationPayload } from './PlanOptionDeck
 
 interface AgentChatPanelProps {
   onGenerate: () => Promise<void>;
+  onStop: () => Promise<void>;
   onConfirm: () => Promise<void>;
   onAnnotateText?: (payload: PlanTextAnnotationPayload) => Promise<void>;
   onReject: () => void;
   onScheduleDecision: (decision: { optionId: string; taskId: string }) => Promise<void>;
+  onUndoRun?: (runId: string) => Promise<void>;
+  onForceComplexPlan?: () => Promise<void>;
+  /** 快速路径时间冲突挂起：非空时在聊天流里渲染主 agent 同款冲突决策卡 */
+  pendingEventConflict?: PendingEventConflictView | null;
+  onResolveEventConflict?: (action: 'keep_conflict' | 'shift_existing' | 'cancel', shiftMinutes?: number) => Promise<void>;
   variant?: 'compact' | 'primary';
 }
 
@@ -305,7 +313,80 @@ function displayStepStatus(step: AgentRunStep): AgentRunStep['status'] {
   return step.status;
 }
 
-export function AgentChatPanel({ onGenerate, onConfirm, onAnnotateText, onReject, onScheduleDecision, variant = 'compact' }: AgentChatPanelProps) {
+/**
+ * 快速路径时间冲突决策卡 —— 样式与主 agent 的冲突/决策卡一致（agent-decision-panel）。
+ * 三个选项：保留冲突照常执行 / 把冲突日程后移 N 分钟（N 可编辑）/ 取消。
+ */
+function EventConflictDecisionCard({
+  conflict,
+  onResolve,
+  loading
+}: {
+  conflict: PendingEventConflictView;
+  onResolve: (action: 'keep_conflict' | 'shift_existing' | 'cancel', shiftMinutes?: number) => Promise<void>;
+  loading: boolean;
+}) {
+  // 后移分钟数：默认用建议值，用户可自行编辑
+  const [shiftMinutes, setShiftMinutes] = useState<number>(conflict.suggestedShiftMinutes);
+  useEffect(() => {
+    setShiftMinutes(conflict.suggestedShiftMinutes);
+  }, [conflict.suggestedShiftMinutes]);
+
+  return (
+    <div className="agent-decision-panel">
+      <div className="agent-decision-copy">
+        <strong>检测到时间冲突</strong>
+        <span>{conflict.message}，请选择处理方式</span>
+      </div>
+      <ul className="agent-conflict-list">
+        {conflict.conflicts.map((item) => (
+          <li className="agent-conflict-item" key={item.eventId}>
+            <div>
+              <strong>{item.title}</strong>
+              <span>{item.timeText}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <div className="agent-decision-card-grid">
+        <button className="agent-decision-card" type="button" disabled={loading} onClick={() => void onResolve('keep_conflict')}>
+          <strong>保留冲突，照常安排</strong>
+          <span>重叠也照原计划写入日历</span>
+        </button>
+        <div className="agent-decision-card agent-decision-card-shift">
+          <strong>原有日程后移后创建</strong>
+          <span>把上面冲突的日程整体后移（保持时长）：</span>
+          <div className="agent-shift-input-row">
+            <InputNumber
+              min={5}
+              max={24 * 60}
+              step={5}
+              value={shiftMinutes}
+              disabled={loading}
+              onChange={(value) => setShiftMinutes(Number(value) || conflict.suggestedShiftMinutes)}
+              onPressEnter={() => {
+                const minutes = Number(shiftMinutes);
+                if (!loading && Number.isFinite(minutes) && minutes > 0) {
+                  void onResolve('shift_existing', minutes);
+                }
+              }}
+            />
+            <span className="agent-shift-unit">分钟</span>
+            <Button size="small" type="primary" disabled={loading} onClick={() => void onResolve('shift_existing', shiftMinutes)}>
+              执行
+            </Button>
+          </div>
+        </div>
+        <button className="agent-decision-card" type="button" disabled={loading} onClick={() => void onResolve('cancel')}>
+          <strong>取消本次操作</strong>
+          <span>日历不做任何改动</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function AgentChatPanel({ onGenerate, onStop, onConfirm, onAnnotateText, onReject, onScheduleDecision, onUndoRun, onForceComplexPlan, pendingEventConflict, onResolveEventConflict, variant = 'compact' }: AgentChatPanelProps) {
   const userInput = useAgentStore((state) => state.userInput);
   const runStatus = useAgentStore((state) => state.runStatus);
   const steps = useAgentStore((state) => state.steps);
@@ -317,6 +398,9 @@ export function AgentChatPanel({ onGenerate, onConfirm, onAnnotateText, onReject
   const directAnswer = useAgentStore((state) => state.directAnswer);
   const conversationMessages = useAgentStore((state) => state.conversationMessages);
   const confirmLoading = useAgentStore((state) => state.confirmLoading);
+  const resumableJob = useAgentStore((state) => state.resumableJob);
+  const latestUndoableRun = useAgentStore((state) => state.latestUndoableRun);
+  const revokedRunIds = useAgentStore((state) => state.revokedRunIds);
   const setUserInput = useAgentStore((state) => state.setUserInput);
   const setClarificationInput = useAgentStore((state) => state.setClarificationInput);
   const selectPlan = useAgentStore((state) => state.selectPlan);
@@ -324,6 +408,7 @@ export function AgentChatPanel({ onGenerate, onConfirm, onAnnotateText, onReject
   const visibleSteps = steps.filter((step) => step.status !== 'pending');
   const hasVisibleAgentSteps = visibleSteps.length > 0;
   // const latestAgentTrace = readLatestAgentTrace(visibleSteps);
+  const showPausedHint = runStatus === 'idle' && resumableJob?.job.status === 'paused_manual';
   const visibleClarificationReasons = clarification
     ? clarification.reasons.filter((reason) => {
         if (reason.includes('duration') && clarificationInput.duration?.trim()) return false;
@@ -368,10 +453,40 @@ export function AgentChatPanel({ onGenerate, onConfirm, onAnnotateText, onReject
           </div>
         ) : null}
 
+        {showPausedHint ? (
+          <Alert
+            type="info"
+            showIcon
+            message="检测到一个上次手动终止的任务"
+            description="输入「继续」可恢复上次的任务现场，或直接输入新需求开始新的排期（将自动放弃上次的断点）。"
+          />
+        ) : null}
+
         {conversationMessages.map((item) => (
           <div className={`chat-message ${item.role === 'user' ? 'user' : 'assistant'}`} key={item.id}>
             <strong>{item.role === 'user' ? '你' : 'ChronoAgent'}</strong>
             <p>{item.content}</p>
+            {item.role === 'assistant' &&
+            item.kind === 'agentSummary' &&
+            item.runId &&
+            item.content.includes('已写入日历') &&
+            latestUndoableRun?.runId === item.runId &&
+            !revokedRunIds.includes(item.runId) &&
+            onUndoRun ? (
+              <div className="agent-undo-row">
+                <Button
+                  size="small"
+                  danger
+                  icon={<UndoOutlined />}
+                  onClick={() => void onUndoRun(item.runId as string)}
+                >
+                  撤回本次操作
+                </Button>
+              </div>
+            ) : null}
+            {item.role === 'assistant' && item.kind === 'agentSummary' && item.runId && revokedRunIds.includes(item.runId) ? (
+              <div className="agent-undo-row agent-undo-done">已撤回</div>
+            ) : null}
           </div>
         ))}
 
@@ -379,6 +494,20 @@ export function AgentChatPanel({ onGenerate, onConfirm, onAnnotateText, onReject
           <div className="chat-message assistant">
             <strong>ChronoAgent</strong>
             <p>{directAnswer}</p>
+            {onForceComplexPlan ? (
+              <div className="agent-undo-row">
+                <Button size="small" onClick={() => void onForceComplexPlan()} disabled={loading}>
+                  这不是我想要的，转复杂规划
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {pendingEventConflict && onResolveEventConflict ? (
+          <div className="chat-message assistant">
+            <strong>ChronoAgent</strong>
+            <EventConflictDecisionCard conflict={pendingEventConflict} onResolve={onResolveEventConflict} loading={loading} />
           </div>
         ) : null}
 
@@ -602,8 +731,15 @@ export function AgentChatPanel({ onGenerate, onConfirm, onAnnotateText, onReject
           placeholder="例如：下周五前完成开题报告，花费 10 小时，每天晚上 7 点后安排"
           disabled={loading}
         />
-        <Button className="agent-send-button" type="primary" icon={<SendOutlined />} loading={loading} onClick={() => void onGenerate()}>
-          {loading ? 'Agent 正在工作...' : clarification ? '提交补充信息' : '发送'}
+        <Button
+          className={`agent-send-button ${loading ? 'agent-send-button-stop' : ''}`}
+          type="primary"
+          danger={loading}
+          icon={loading ? <StopOutlined /> : <SendOutlined />}
+          aria-label={loading ? '终止当前 Agent 任务' : '发送排期目标'}
+          onClick={() => void (loading ? onStop() : onGenerate())}
+        >
+          {loading ? null : clarification ? '提交补充信息' : '发送'}
         </Button>
       </div>
     </section>

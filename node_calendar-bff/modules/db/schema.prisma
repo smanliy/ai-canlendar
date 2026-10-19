@@ -1,251 +1,253 @@
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-    id           String    @id @default(uuid())
-    phone        String    @unique
-    passwordHash String?
-    nickname     String
-    avatarUrl    String?
-    status       String    @default("active")
-    lastLoginAt  DateTime?
-    createdAt    DateTime  @default(now())
-    updatedAt    DateTime  @updatedAt
-    deletedAt    DateTime?
+  id           String    @id @default(uuid())
+  phone        String    @unique
+  passwordHash String?
+  nickname     String
+  avatarUrl    String?
+  status       String    @default("active")
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
 
-    refreshTokens         RefreshToken[]
-    preference            UserPreference?
-    events                CalendarEvent[]
-    agentPlanningSessions AgentPlanningSession[]
-    agentMessages         AgentConversationMessage[]
-    agentJobs             AgentJob[]
-    agentCheckpoints      AgentCheckpoint[]
-    agentCompensations    AgentCompensation[]
+  refreshTokens         RefreshToken[]
+  preference            UserPreference?
+  events                CalendarEvent[]
+  agentPlanningSessions AgentPlanningSession[]
+  agentMessages         AgentConversationMessage[]
+  agentJobs             AgentJob[]
+  agentCheckpoints      AgentCheckpoint[]
+  agentCompensations    AgentCompensation[]
+  scheduleOperationLogs ScheduleOperationLog[]
 }
 
 model SmsCode {
-    id         String    @id @default(uuid())
-    phone      String
-    scene      String
-    codeHash   String
-    expiresAt  DateTime
-    consumedAt DateTime?
-    ipAddress  String?
-    userAgent  String?
-    createdAt  DateTime  @default(now())
+  id         String    @id @default(uuid())
+  phone      String
+  scene      String
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
 
-    @@index([phone, scene, expiresAt])
+  @@index([phone, scene, expiresAt])
 }
 
 model RefreshToken {
-    id        String    @id @default(uuid())
-    userId    String
-    tokenHash String
-    expiresAt DateTime
-    revokedAt DateTime?
-    ipAddress String?
-    userAgent String?
-    createdAt DateTime  @default(now())
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime  @default(now())
 
-    user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-    @@index([userId])
-    @@index([tokenHash])
+  @@index([userId])
+  @@index([tokenHash])
 }
 
 model UserPreference {
-    id                     String   @id @default(uuid())
-    userId                 String   @unique
-    preferredStartTime     String   @default("19:00")
-    preferredEndTime       String   @default("23:00")
-    dailyFocusLimitMinutes Int      @default(120)
-    avoidWeekends          Boolean  @default(true)
-    defaultEventCategory   String   @default("学习")
-    defaultReminderMinutes Int      @default(10)
-    timezone               String   @default("Asia/Shanghai")
-    createdAt              DateTime @default(now())
-    updatedAt              DateTime @updatedAt
+  id                     String   @id @default(uuid())
+  userId                 String   @unique
+  preferredStartTime     String   @default("19:00")
+  preferredEndTime       String   @default("23:00")
+  dailyFocusLimitMinutes Int      @default(120)
+  avoidWeekends          Boolean  @default(true)
+  defaultEventCategory   String   @default("学习")
+  defaultReminderMinutes Int      @default(10)
+  timezone               String   @default("Asia/Shanghai")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
-    user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 }
 
 model CalendarEvent {
-    id         String    @id @default(uuid())
-    userId     String
-    title      String
-    startTime  DateTime
-    endTime    DateTime
-    location   String?
-    category   String
-    priority   String
-    note       String?
-    status     String    @default("未开始")
-    source     String    @default("manual")
-    agentRunId String?
-    createdAt  DateTime  @default(now())
-    updatedAt  DateTime  @updatedAt
-    deletedAt  DateTime?
+  id         String    @id @default(uuid())
+  userId     String
+  title      String
+  startTime  DateTime
+  endTime    DateTime
+  location   String?
+  category   String
+  priority   String
+  note       String?
+  status     String    @default("未开始")
+  source     String    @default("manual")
+  agentRunId String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
 
-    user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-    @@index([userId, startTime])
-    @@index([userId, endTime])
-    @@index([userId, startTime, endTime])
-    @@index([agentRunId])
+  @@index([userId, startTime])
+  @@index([userId, endTime])
+  @@index([userId, startTime, endTime])
+  @@index([agentRunId])
 }
 
 model AgentPlanningSession {
-    id                String   @id
-    userId            String
-    rawInput          String
-    status            String   @default("waitingConfirm")
-    userPreference    Json
-    normalizedContext Json
-    atomicPlan        Json
-    createdAt         DateTime @default(now())
-    updatedAt         DateTime @updatedAt
+  id                String   @id
+  userId            String
+  rawInput          String
+  status            String   @default("waitingConfirm")
+  userPreference    Json
+  normalizedContext Json
+  atomicPlan        Json
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-    user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-    @@index([userId])
-    @@index([userId, updatedAt])
+  @@index([userId])
+  @@index([userId, updatedAt])
 }
 
 model AgentConversationMessage {
-    id        String    @id @default(uuid())
-    userId    String
-    role      String
-    kind      String
-    content   String
-    runId     String?
-    payload   Json?
-    expiresAt DateTime  @default(dbgenerated("(now() + '30 days'::interval)"))
-    createdAt DateTime  @default(now())
-    deletedAt DateTime?
+  id        String    @id @default(uuid())
+  userId    String
+  role      String
+  kind      String
+  content   String
+  runId     String?
+  payload   Json?
+  expiresAt DateTime  @default(dbgenerated("(now() + '30 days'::interval)"))
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
 
-    user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-    @@index([userId, createdAt])
-    @@index([userId, expiresAt])
-    @@index([runId])
+  @@index([userId, createdAt])
+  @@index([userId, expiresAt])
+  @@index([runId])
 }
 
 model AgentJob {
-    id          String    @id @default(uuid())
-    runId       String
-    userId      String
-    type        String
-    status      String    @default("queued")
-    idempotencyKey String?
-    input       Json
-    result      Json?
-    error       String?
-    priority    Int       @default(0)
-    attempt     Int       @default(0)
-    maxAttempts Int       @default(3)
-    lockedAt    DateTime?
-    lockedBy    String?
-    heartbeatAt DateTime?
-    startedAt   DateTime?
-    finishedAt  DateTime?
-    createdAt   DateTime  @default(now())
-    updatedAt   DateTime  @updatedAt
+  id             String    @id @default(uuid())
+  runId          String
+  userId         String
+  type           String
+  status         String    @default("queued")
+  idempotencyKey String?
+  input          Json
+  result         Json?
+  error          String?
+  priority       Int       @default(0)
+  attempt        Int       @default(0)
+  maxAttempts    Int       @default(3)
+  lockedAt       DateTime?
+  lockedBy       String?
+  heartbeatAt    DateTime?
+  progressUpdatedAt DateTime?
+  maxExecutionMs Int?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-    user   User            @relation(fields: [userId], references: [id])
-    events AgentJobEvent[]
+  user   User            @relation(fields: [userId], references: [id])
+  events AgentJobEvent[]
 
-    @@index([userId, createdAt])
-    @@index([runId])
-    @@index([status, priority, createdAt])
-    @@index([lockedAt])
-    @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([runId])
+  @@index([status, priority, createdAt])
+  @@index([lockedAt])
 }
 
 model AgentJobEvent {
-    id        String   @id @default(uuid())
-    jobId     String
-    type      String
-    level     String   @default("info")
-    stepId    String?
-    message   String?
-    payload   Json?
-    traceId   String?
-    parentEventId String?
-    durationMs Int?
-    createdAt DateTime @default(now())
+  id            String   @id @default(uuid())
+  jobId         String
+  type          String
+  level         String   @default("info")
+  stepId        String?
+  message       String?
+  payload       Json?
+  traceId       String?
+  parentEventId String?
+  durationMs    Int?
+  createdAt     DateTime @default(now())
 
-    job AgentJob @relation(fields: [jobId], references: [id])
+  job AgentJob @relation(fields: [jobId], references: [id])
 
-    @@index([jobId, createdAt])
-    @@index([traceId])
+  @@index([jobId, createdAt])
+  @@index([traceId])
 }
 
 model AgentCheckpoint {
-    id            String    @id @default(uuid())
-    runId         String
-    userId        String
-    jobId         String?
-    type          String
-    stepName      String
-    prompt        String
-    options       Json?
-    resumePayload Json?
-    stateSnapshot Json
-    status        String    @default("pending")
-    version       Int       @default(1)
-    expiresAt     DateTime?
-    resolvedAt    DateTime?
-    createdAt     DateTime  @default(now())
-    updatedAt     DateTime  @updatedAt
+  id            String    @id @default(uuid())
+  runId         String
+  userId        String
+  jobId         String?//关联后台任务
+  type          String// checkpoin类型
+  stepName      String//卡在那个步骤
+  prompt        String
+  options       Json?
+  resumePayload Json?
+  stateSnapshot Json
+  status        String    @default("pending")
+  version       Int       @default(1)
+  expiresAt     DateTime?
+  resolvedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-    user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-    @@index([runId, status])
-    @@index([userId, status, createdAt])
-    @@index([expiresAt])
+  @@index([runId, status])
+  @@index([userId, status, createdAt])
+  @@index([expiresAt])
 }
 
 model AgentCompensation {
-    id        String   @id @default(uuid())
-    userId    String
-    runId     String
-    type      String
-    status    String   @default("succeeded")
-    reason    String?
-    affectedCount Int   @default(0)
-    payload   Json?
-    createdAt DateTime @default(now())
+  id            String   @id @default(uuid())
+  userId        String
+  runId         String
+  type          String
+  status        String   @default("succeeded")
+  reason        String?
+  affectedCount Int      @default(0)
+  payload       Json?
+  createdAt     DateTime @default(now())
 
-    user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-    @@index([userId, createdAt])
-    @@index([runId])
+  @@index([userId, createdAt])
+  @@index([runId])
 }
 
 model ScheduleOperationLog {
-    id                 String   @id @default(uuid())
-    userId             String
-    taskId             String
-    jobId              String?
-    operateType        String
-    targetScheduleId   String
-    beforeSnapshot     Json?
-    afterSnapshot      Json?
-    isCompensated      Boolean  @default(false)
-    compensatedAt      DateTime?
-    compensationReason String?
-    createdAt          DateTime @default(now())
-    updatedAt          DateTime @updatedAt
+  id                 String    @id @default(uuid())
+  userId             String
+  taskId             String
+  jobId              String?
+  operateType        String
+  targetScheduleId   String
+  beforeSnapshot     Json?
+  afterSnapshot      Json?
+  isCompensated      Boolean   @default(false)
+  compensatedAt      DateTime?
+  compensationReason String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
 
-    user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-    @@index([userId, taskId, createdAt])
-    @@index([taskId, isCompensated, createdAt])
-    @@index([targetScheduleId])
+  @@index([userId, taskId, createdAt])
+  @@index([taskId, isCompensated, createdAt])
+  @@index([targetScheduleId])
 }

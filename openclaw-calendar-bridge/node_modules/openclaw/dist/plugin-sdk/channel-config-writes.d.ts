@@ -1,2 +1,0 @@
-import { ConfigWriteAuthorizationResult, ConfigWriteScope, ConfigWriteTarget, authorizeConfigWrite, canBypassConfigWritePolicy, formatConfigWriteDeniedMessage, resolveChannelConfigWrites } from "./channel-config-helpers.js";
-export { type ConfigWriteAuthorizationResult, type ConfigWriteScope, type ConfigWriteTarget, authorizeConfigWrite, canBypassConfigWritePolicy, formatConfigWriteDeniedMessage, resolveChannelConfigWrites };

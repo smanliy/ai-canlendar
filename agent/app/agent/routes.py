@@ -3,7 +3,7 @@ from http import HTTPStatus
 from typing import Any
 
 from .executor import accept_task
-from .planner import plan_atomic_tasks, resume_schedule_decision
+from .planner import check_event_draft, plan_atomic_tasks, resume_schedule_decision
 from .tool_agent import run_tool_agent
 from .validators import validate_fields
 
@@ -41,6 +41,19 @@ def handle_post(path: str, raw_body: str) -> tuple[int, dict[str, Any]]:
                     "issues": [f"Python Agent 规划工具失败: {error}"],
                 },
                 "toolResults": [],
+            }
+
+    if path == "/agent/event-draft-check":
+        try:
+            return HTTPStatus.OK, check_event_draft(payload)
+        except Exception as error:  # noqa: BLE001
+            return HTTPStatus.OK, {
+                "status": "failed",
+                "draft": {},
+                "calendarEventsToolResult": {},
+                "freeWindowsToolResult": {},
+                "conflictCheckResult": {},
+                "errors": [f"Python Agent 单条日程检查失败: {error}"],
             }
 
     if path == "/agent/resume":

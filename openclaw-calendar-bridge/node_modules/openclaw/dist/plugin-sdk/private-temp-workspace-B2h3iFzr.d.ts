@@ -1,2 +1,0 @@
-import { TempWorkspace, TempWorkspaceOptions, TempWorkspaceSync, tempWorkspace, tempWorkspaceSync, withTempWorkspace, withTempWorkspaceSync } from "@openclaw/fs-safe/temp";
-export { tempWorkspaceSync as a, tempWorkspace as i, TempWorkspaceOptions as n, withTempWorkspace as o, TempWorkspaceSync as r, withTempWorkspaceSync as s, TempWorkspace as t };

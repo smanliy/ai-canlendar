@@ -1,0 +1,50 @@
+[
+  {
+    "id": "F06",
+    "category": "日程修改",
+    "input": "洗澡冲突也照常推迟一小时",
+    "pass": false,
+    "failures": [
+      "op[0]: 期望 allowConflict=true，实际未输出"
+    ],
+    "actualOps": [
+      {
+        "kind": "event_update",
+        "target": {
+          "title": "洗澡"
+        },
+        "patch": {
+          "shiftMinutes": 60
+        }
+      }
+    ],
+    "reason": "用户要求推迟洗澡一小时，且明确表示冲突也照常，因此输出event_update并设置allowConflict为true。",
+    "fallbackUsed": false,
+    "latencyMs": 4552
+  },
+  {
+    "id": "I05",
+    "category": "多需求混合",
+    "input": "半小时后提醒我开会，冲突也照常安排",
+    "pass": false,
+    "failures": [
+      "op[0]: 期望 allowConflict=true，实际未输出"
+    ],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "开会",
+          "startTime": "2026-09-08T20:54:06+08:00",
+          "endTime": "2026-09-08T21:09:06+08:00",
+          "category": "工作",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求半小时后提醒开会，属于原子提醒，直接创建日程，且明确表示冲突也照常安排。",
+    "fallbackUsed": false,
+    "latencyMs": 5116
+  }
+]

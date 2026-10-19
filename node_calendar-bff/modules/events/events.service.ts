@@ -135,6 +135,13 @@ export async function bulkCreateEvents(userId: string, payload: { events: EventP
   }
 
   const agentRunId = payload.agentRunId;
+  // 落库幂等：同一 agentRunId 已有日程（上次执行已写入）→ 跳过创建，直接返回已有日程。
+  // 场景：任务被终止后用户说"继续"，恢复重跑时防止重复排期。
+  const existing = await eventRepository.findEventsByAgentRunId(userId, agentRunId);
+  if (existing.length > 0) {
+    return existing;
+  }
+
   return prisma.$transaction(async (tx) => {
     const created = await eventRepository.bulkCreateEvents(
       userId,
@@ -250,4 +257,21 @@ export async function undoLatestAgentRunEvents(userId: string) {
     throw new Error('没有找到最近可撤销的 Agent 日程');
   }
   return undoAgentRunEvents(userId, agentRunId, 'user_undo_latest');
+}
+
+/**
+ * 查询"最新可撤回轮次"：只撤最新一轮的交互依据。
+ * 撤回后（软删），更早一轮自动成为新的最新 → 支持连锁撤回（Ctrl+Z 手感）。
+ */
+export async function getLatestAgentRunInfo(userId: string): Promise<{ runId: string; eventCount: number; createdAt: string } | null> {
+  const latest = await eventRepository.findLatestAgentRunId(userId);
+  const agentRunId = latest?.agentRunId;
+  if (!agentRunId) return null;
+  const eventCount = await eventRepository.countAgentEventsByRunId(userId, agentRunId);
+  if (eventCount === 0) return null;
+  return {
+    runId: agentRunId,
+    eventCount,
+    createdAt: latest.createdAt instanceof Date ? latest.createdAt.toISOString() : String(latest.createdAt)
+  };
 }

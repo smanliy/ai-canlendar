@@ -1,0 +1,63 @@
+[
+  {
+    "id": "A01",
+    "category": "原子提醒",
+    "input": "三分钟后提醒我洗澡",
+    "pass": false,
+    "failures": [
+      "op[0]: kind 期望 event_create，实际 new_task",
+      "走了关键词兜底（fallbackUsed=true），LLM 主路径未生效"
+    ],
+    "actualOps": [
+      {
+        "kind": "new_task",
+        "taskText": "三分钟后提醒我洗澡"
+      }
+    ],
+    "reason": "兜底：LLM 不可用，按新任务处理",
+    "fallbackUsed": true,
+    "latencyMs": 10787
+  },
+  {
+    "id": "A04",
+    "category": "原子提醒",
+    "input": "二十分钟后提醒我喝水",
+    "pass": true,
+    "failures": [],
+    "actualOps": [
+      {
+        "kind": "event_create",
+        "event": {
+          "title": "提醒我喝水",
+          "startTime": "2026-09-08T20:42:47+08:00",
+          "endTime": "2026-09-08T20:57:47+08:00",
+          "category": "生活",
+          "priority": "中",
+          "status": "未开始"
+        }
+      }
+    ],
+    "reason": "用户要求二十分钟后提醒喝水，属于直接创建提醒事件。",
+    "fallbackUsed": false,
+    "latencyMs": 1641
+  },
+  {
+    "id": "A05",
+    "category": "原子提醒",
+    "input": "今晚8点提醒我打电话给妈妈",
+    "pass": false,
+    "failures": [
+      "op[0]: kind 期望 event_create，实际 new_task",
+      "走了关键词兜底（fallbackUsed=true），LLM 主路径未生效"
+    ],
+    "actualOps": [
+      {
+        "kind": "new_task",
+        "taskText": "今晚8点提醒我打电话给妈妈"
+      }
+    ],
+    "reason": "兜底：LLM 不可用，按新任务处理",
+    "fallbackUsed": true,
+    "latencyMs": 10754
+  }
+]
